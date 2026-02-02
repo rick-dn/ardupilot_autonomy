@@ -7,7 +7,11 @@ Provides ROS 2 services for basic flight operations
 import rclpy
 from rclpy.node import Node
 from std_srvs.srv import Trigger
+from rclpy.action import ActionServer
 import time
+
+from ardupilot_autonomy_msgs.action import Takeoff
+from ardupilot_autonomy.actions.takeoff_action import TakeoffAction
 
 
 class VehicleInterface(Node):
@@ -30,6 +34,17 @@ class VehicleInterface(Node):
         self.mavros = MavrosInterface(self)
         # self.mavros = DDSInterface(self)
         self.state_machine = StateMachine()
+
+        # Initialize action handlers
+        self.takeoff_action_handler = TakeoffAction(self, self.mavros, self.state_machine)
+
+        # Create action server (delegates to handler)
+        self._takeoff_action_server = ActionServer(
+            self,
+            Takeoff,
+            '/vehicle/takeoff_action',
+            self.takeoff_action_handler.execute
+        )
         
         # Simple busy flag (no locks yet)
         self.busy = False
@@ -65,6 +80,14 @@ class VehicleInterface(Node):
         self.create_service(Trigger, '/vehicle/velocity_stop', self.velocity_stop_callback)
         self.create_service(Trigger, '/vehicle/accel_start', self.accel_start_callback)
         self.create_service(Trigger, '/vehicle/accel_stop', self.accel_stop_callback)
+
+        # Create action server (delegates to handler)
+        self._takeoff_action_server = rclpy.action.ActionServer(
+        self,
+        Takeoff,
+        '/vehicle/takeoff_action',
+        self.takeoff_action_handler.execute
+        )
         
         # Status timer
         self.status_timer = self.create_timer(3.0, self.status_callback)
@@ -83,6 +106,8 @@ class VehicleInterface(Node):
         self.get_logger().info('  /vehicle/accel_start')
         self.get_logger().info('  /vehicle/accel_stop')
 
+        self.get_logger().info('  /vehicle/takeoff_action')
+
     def status_callback(self):
         """Periodic status printout"""
         self.get_logger().info(
@@ -99,10 +124,10 @@ class VehicleInterface(Node):
             response.message = 'Busy'
             return response
 
-        if not self.state_machine.can_set_guided():  # FSM check
-            response.success = False
-            response.message = f'Cannot set GUIDED from state: {self.state_machine.get_state().name}'
-            return response
+        # if not self.state_machine.can_set_guided():  # FSM check
+        #     response.success = False
+        #     response.message = f'Cannot set GUIDED from state: {self.state_machine.get_state().name}'
+        #     return response
 
         self.busy = True
         try:
@@ -121,16 +146,16 @@ class VehicleInterface(Node):
             return response
 
         # FSM check
-        if not self.state_machine.can_arm():
-            response.success = False
-            response.message = f'Cannot arm from state: {self.state_machine.get_state().name}'
-            return response
+        # if not self.state_machine.can_arm():
+        #     response.success = False
+        #     response.message = f'Cannot arm from state: {self.state_machine.get_state().name}'
+        #     return response
 
         self.busy = True
         try:
             self.mavros.arm()
 
-            self.state_machine.set_state(self.State.ARMED)
+            # self.state_machine.set_state(self.State.ARMED)
             response.success = True
             response.message = 'Arm command sent'
         finally:
@@ -153,7 +178,7 @@ class VehicleInterface(Node):
                 response.message = 'Disarm failed'
                 return response
             
-            self.state_machine.set_state(self.State.IDLE)
+            # self.state_machine.set_state(self.State.IDLE)
             response.success = True
             response.message = 'Disarmed successfully'
             
@@ -169,10 +194,10 @@ class VehicleInterface(Node):
             response.message = 'Busy - another command in progress'
             return response
         
-        if not self.state_machine.can_takeoff():
-            response.success = False
-            response.message = f'Cannot takeoff from state: {self.state_machine.get_state().name}'
-            return response
+        # if not self.state_machine.can_takeoff():
+        #     response.success = False
+        #     response.message = f'Cannot takeoff from state: {self.state_machine.get_state().name}'
+        #     return response
         
         self.busy = True
         
@@ -184,7 +209,7 @@ class VehicleInterface(Node):
                 response.message = 'Takeoff command failed'
                 return response
             
-            self.state_machine.set_state(self.State.AIRBORNE)
+            # self.state_machine.set_state(self.State.AIRBORNE)
             response.success = True
             response.message = f'Takeoff to {altitude}m commanded'
             
@@ -200,10 +225,10 @@ class VehicleInterface(Node):
             response.message = 'Busy - another command in progress'
             return response
         
-        if not self.state_machine.can_goto():
-            response.success = False
-            response.message = f'Cannot goto from state: {self.state_machine.get_state().name}'
-            return response
+        # if not self.state_machine.can_goto():
+        #     response.success = False
+        #     response.message = f'Cannot goto from state: {self.state_machine.get_state().name}'
+        #     return response
         
         self.busy = True
         
@@ -234,10 +259,10 @@ class VehicleInterface(Node):
             response.message = 'Busy - another command in progress'
             return response
         
-        if not self.state_machine.can_goto():
-            response.success = False
-            response.message = f'Cannot goto from state: {self.state_machine.get_state().name}'
-            return response
+        # if not self.state_machine.can_goto():
+        #     response.success = False
+        #     response.message = f'Cannot goto from state: {self.state_machine.get_state().name}'
+        #     return response
         
         self.busy = True
         
@@ -268,10 +293,10 @@ class VehicleInterface(Node):
             return response
 
         # FSM check
-        if not self.state_machine.can_velocity_start():
-            response.success = False
-            response.message = f'Cannot start velocity from state: {self.state_machine.get_state().name}'
-            return response
+        # if not self.state_machine.can_velocity_start():
+        #     response.success = False
+        #     response.message = f'Cannot start velocity from state: {self.state_machine.get_state().name}'
+        #     return response
 
         self.busy = True
         try:
@@ -297,10 +322,10 @@ class VehicleInterface(Node):
             return response
 
         # FSM check
-        if not self.state_machine.can_velocity_stop():
-            response.success = False
-            response.message = f'Cannot stop velocity from state: {self.state_machine.get_state().name}'
-            return response
+        # if not self.state_machine.can_velocity_stop():
+        #     response.success = False
+        #     response.message = f'Cannot stop velocity from state: {self.state_machine.get_state().name}'
+        #     return response
 
         self.busy = True
         try:
@@ -331,10 +356,10 @@ class VehicleInterface(Node):
             return response
 
         # FSM check
-        if not self.state_machine.can_accel_start():
-            response.success = False
-            response.message = f'Cannot start accel from state: {self.state_machine.get_state().name}'
-            return response
+        # if not self.state_machine.can_accel_start():
+        #     response.success = False
+        #     response.message = f'Cannot start accel from state: {self.state_machine.get_state().name}'
+        #     return response
 
         self.busy = True
         try:
@@ -359,10 +384,10 @@ class VehicleInterface(Node):
             return response
 
         # FSM check
-        if not self.state_machine.can_accel_stop():
-            response.success = False
-            response.message = f'Cannot stop accel from state: {self.state_machine.get_state().name}'
-            return response
+        # if not self.state_machine.can_accel_stop():
+        #     response.success = False
+        #     response.message = f'Cannot stop accel from state: {self.state_machine.get_state().name}'
+        #     return response
 
         self.busy = True
         try:
@@ -383,10 +408,10 @@ class VehicleInterface(Node):
             response.message = 'Busy - another command in progress'
             return response
         
-        if not self.state_machine.can_land():
-            response.success = False
-            response.message = f'Cannot land from state: {self.state_machine.get_state().name}'
-            return response
+        # if not self.state_machine.can_land():
+        #     response.success = False
+        #     response.message = f'Cannot land from state: {self.state_machine.get_state().name}'
+        #     return response
         
         self.busy = True
         
@@ -396,7 +421,7 @@ class VehicleInterface(Node):
                 response.message = 'Land command failed'
                 return response
             
-            self.state_machine.set_state(self.State.LANDED)
+            # self.state_machine.set_state(self.State.LANDED)
             response.success = True
             response.message = 'Land commanded'
             
@@ -413,16 +438,16 @@ class VehicleInterface(Node):
             return response
 
         # FSM check
-        if not self.state_machine.can_land():  # RTL has same requirements as land
-            response.success = False
-            response.message = f'Cannot RTL from state: {self.state_machine.get_state().name}'
-            return response
+        # if not self.state_machine.can_land():  # RTL has same requirements as land
+        #     response.success = False
+        #     response.message = f'Cannot RTL from state: {self.state_machine.get_state().name}'
+        #     return response
 
         self.busy = True
         try:
             self.mavros.set_mode("RTL")
 
-            self.state_machine.set_state(self.State.LANDED)
+            # self.state_machine.set_state(self.State.LANDED)
             response.success = True
             response.message = 'RTL command sent'
         finally:

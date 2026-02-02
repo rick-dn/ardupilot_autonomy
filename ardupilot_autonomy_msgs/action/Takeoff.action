@@ -1,0 +1,12 @@
+# Goal
+float32 altitude
+
+---
+# Result
+bool success
+string message
+
+---
+# Feedback
+float32 current_altitude
+float32 progress

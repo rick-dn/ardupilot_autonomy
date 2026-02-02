@@ -20,13 +20,13 @@ import math
 
 class MavrosInterface:
     """Wrapper for MAVROS communication"""
-    
+
     def __init__(self, node: Node):
         self.node = node
 
         # Geodesic calculator for lat/lon conversions
         self.geod = Geodesic.WGS84
-        
+
         # QoS profile for subscribers
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -48,7 +48,7 @@ class MavrosInterface:
         self.mode_client = self.node.create_client(SetMode, '/mavros/set_mode')
         self.takeoff_client = self.node.create_client(CommandTOL, '/mavros/cmd/takeoff')
         self.land_client = self.node.create_client(CommandTOL, '/mavros/cmd/land')
-        
+
         # MAVROS subscribers
         self.state_sub = self.node.create_subscription(
             State,
@@ -56,14 +56,14 @@ class MavrosInterface:
             self.state_callback,
             qos_profile
         )
-        
+
         self.gps_sub = self.node.create_subscription(
             NavSatFix,
             '/mavros/global_position/global',
             self.gps_callback,
             qos_profile_global
         )
-        
+
         # MAVROS publisher
         self.setpoint_pub = self.node.create_publisher(
             GeoPoseStamped,
@@ -91,7 +91,7 @@ class MavrosInterface:
             '/mavros/setpoint_accel/accel',
             10
         )
-        
+
         # State tracking
         self.armed = False
         self.mode = ""
@@ -124,9 +124,9 @@ class MavrosInterface:
         # Timer for continuous velocity publishing (10Hz)
         self.velocity_timer = self.node.create_timer(0.1, self.publish_velocity)
         self.accel_timer = self.node.create_timer(0.1, self.publish_accel)
-        
+
         self.node.get_logger().info('MAVROS Interface initialized')
-    
+
     def state_callback(self, msg):
         """MAVROS state callback"""
         # self.node.get_logger().info(f'📥 mavros_interface state_callback: msg.mode="{msg.mode}", msg.armed={msg.armed}')
@@ -163,43 +163,43 @@ class MavrosInterface:
         final_lon = result['lon2']
 
         return final_lat, final_lon
-    
+
     def gps_callback(self, msg):
         """GPS position callback"""
         self.current_lat = msg.latitude
         self.current_lon = msg.longitude
         self.current_alt = msg.altitude
-        
+
         # Save home on first valid GPS
         if self.home_lat == 0.0 and msg.latitude != 0.0:
             self.home_lat = msg.latitude
             self.home_lon = msg.longitude
             self.home_alt = msg.altitude
             self.node.get_logger().info(f'Home set: {self.home_lat:.6f}, {self.home_lon:.6f}')
-    
+
     def arm(self):
         """Arm the vehicle"""
         if not self.arm_client.wait_for_service(timeout_sec=5.0):
             self.node.get_logger().error('Arming service not available')
             return False
-        
+
         request = CommandBool.Request()
         request.value = True
-        
+
         # Fire and forget - JacopoPan style
         self.arm_client.call_async(request)
         self.node.get_logger().info('Arm command sent')
         return True
-    
+
     def disarm(self):
         """Disarm the vehicle"""
         if not self.arm_client.wait_for_service(timeout_sec=5.0):
             self.node.get_logger().error('Disarm service not available')
             return False
-        
+
         request = CommandBool.Request()
         request.value = False
-        
+
         # Fire and forget - JacopoPan style
         self.arm_client.call_async(request)
         self.node.get_logger().info('Disarm command sent')
@@ -216,29 +216,29 @@ class MavrosInterface:
     def set_mode_guided(self):
         if not self.mode_client.wait_for_service(timeout_sec=5.0):
             return False
-        
+
         request = SetMode.Request()
         request.custom_mode = "GUIDED"
-        
+
         # Fire and forget - JacopoPan style
         self.mode_client.call_async(request)
         self.node.get_logger().info('GUIDED mode command sent')
         return True
-    
+
     def takeoff(self, altitude):
         """Takeoff to specified altitude"""
         if not self.takeoff_client.wait_for_service(timeout_sec=5.0):
             self.node.get_logger().error('Takeoff service not available')
             return False
-        
+
         request = CommandTOL.Request()
         request.altitude = altitude
-        
+
         # Fire and forget - JacopoPan style
         self.takeoff_client.call_async(request)
         self.node.get_logger().info(f'Takeoff to {altitude}m commanded')
         return True
-    
+
     def goto_position(self, north, east, alt, yaw_deg):
         """Go to GPS position"""
 
@@ -257,12 +257,12 @@ class MavrosInterface:
         msg.pose.orientation.x = 0.0
         msg.pose.orientation.y = 0.0
         msg.pose.orientation.z = math.sin(yaw_rad / 2.0)
-        
+
         # Publish 3 times for robustness
         for _ in range(3):
             self.setpoint_pub.publish(msg)
             rclpy.spin_once(self.node, timeout_sec=0.1)
-        
+
         self.node.get_logger().info(f'Goto position: {lat:.6f}, {lon:.6f}, {alt:.1f}m, Yaw={yaw_deg}°')
         return True
 
@@ -276,7 +276,10 @@ class MavrosInterface:
         msg.pose.position.z = up
 
         # Set orientation (yaw) - always set, no checks
-        yaw_rad = math.radians(yaw_deg)
+        yaw_enu_deg = 90.0 - yaw_deg  # NED → ENU conversion
+        yaw_rad = math.radians(yaw_enu_deg)
+
+        # yaw_rad = math.radians(yaw_deg)
         msg.pose.orientation.w = math.cos(yaw_rad / 2.0)
         msg.pose.orientation.x = 0.0
         msg.pose.orientation.y = 0.0
@@ -287,7 +290,7 @@ class MavrosInterface:
             self.setpoint_local_pub.publish(msg)
             rclpy.spin_once(self.node, timeout_sec=0.1)
 
-        self.node.get_logger().info(f'Goto NED: N={north:.1f}, E={east:.1f}, Up={up:.1f}m, Yaw={yaw_deg}°')
+        self.node.get_logger().info(f'Goto NED: N={north:.1f}, E={east:.1f}, Up={up:.1f}m, Yaw={yaw_deg}°, ENU={yaw_enu_deg}°')
         return True
 
     def local_pose_callback(self, msg):
@@ -380,29 +383,29 @@ class MavrosInterface:
         msg.vector.y = self.target_ay
         msg.vector.z = self.target_az
         self.accel_pub.publish(msg)
-    
+
     def land(self):
         """Land at current position"""
         if not self.land_client.wait_for_service(timeout_sec=5.0):
             self.node.get_logger().error('Land service not available')
             return False
-        
+
         request = CommandTOL.Request()
-        
+
         # Fire and forget - JacopoPan style
         self.land_client.call_async(request)
         self.node.get_logger().info('Land command sent')
         return True
-    
+
     def rtl(self):
         """Return to launch"""
         if not self.mode_client.wait_for_service(timeout_sec=5.0):
             self.node.get_logger().error('Set mode service not available')
             return False
-        
+
         request = SetMode.Request()
         request.custom_mode = "RTL"
-        
+
         # Fire and forget - JacopoPan style
         self.mode_client.call_async(request)
         self.node.get_logger().info('RTL mode set')
