@@ -28,7 +28,10 @@ ros2 run ardupilot_autonomy scan_sequence --ros-args \
   -p spiral_turns:=3
 ```
 
+<<<<<<< HEAD
 ---
+=======
+>>>>>>> 059e8afc4ff68945ac827a1d54279b6901f406bb
 
 ## Features
 
