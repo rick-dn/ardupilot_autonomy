@@ -50,7 +50,7 @@ class VehicleInterface(Node):
         self.busy = False
         
         # Declare parameters
-        self.declare_parameter('takeoff_altitude', 3.0)
+        self.declare_parameter('takeoff_altitude', 5.0)
         self.declare_parameter('goto_north', 0.0)
         self.declare_parameter('goto_east', 0.0)
         self.declare_parameter('goto_up', 0.0)

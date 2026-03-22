@@ -6,6 +6,30 @@ A Python ROS 2 package for autonomous drone control using ArduPilot and MAVROS.
 
 This package provides a clean, service-based interface for controlling ArduPilot drones through MAVROS. It implements position, velocity, and acceleration control modes with state machine validation, following design patterns from production autonomy systems.
 
+## Update: Autonomous Flight Sequences
+
+Added automated flight sequences for takeoff and coverage scanning. Actions, FSM state validation, and thread safety (semaphores/locks) are planned for next iteration.
+
+**Run sequences:**
+```bash
+# Automated takeoff to 5m
+ros2 run ardupilot_autonomy takeoff_sequence
+
+# takeoff to custom altitude
+ros2 run ardupilot_autonomy takeoff_sequence --ros-args -p takeoff_altitude:=10.0
+
+# Spiral coverage scan (run after takeoff)
+ros2 run ardupilot_autonomy scan_sequence
+
+# Configure scan parameters
+ros2 run ardupilot_autonomy scan_sequence --ros-args \
+  -p scan_radius:=10.0 \
+  -p waypoint_spacing:=2.5 \
+  -p spiral_turns:=3
+```
+
+---
+
 ## Features
 
 - **Position Control**: GPS-based waypoint navigation with yaw control

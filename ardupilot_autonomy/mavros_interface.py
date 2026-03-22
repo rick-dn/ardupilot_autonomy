@@ -14,6 +14,7 @@ from sensor_msgs.msg import NavSatFix
 from geographic_msgs.msg import GeoPoseStamped
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3Stamped
 from geographiclib.geodesic import Geodesic
+from mavros_msgs.msg import HomePosition
 
 import math
 
@@ -43,6 +44,14 @@ class MavrosInterface:
             depth=10
         )
 
+        # Create specific QoS for home (match MAVROS publisher)
+        home_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
         # MAVROS service clients
         self.arm_client = self.node.create_client(CommandBool, '/mavros/cmd/arming')
         self.mode_client = self.node.create_client(SetMode, '/mavros/set_mode')
@@ -50,6 +59,13 @@ class MavrosInterface:
         self.land_client = self.node.create_client(CommandTOL, '/mavros/cmd/land')
 
         # MAVROS subscribers
+        self.home_sub = self.node.create_subscription(
+            HomePosition,
+            '/mavros/home_position/home',
+            self.home_callback,
+            home_qos
+        )
+
         self.state_sub = self.node.create_subscription(
             State,
             '/mavros/state',
@@ -137,6 +153,16 @@ class MavrosInterface:
 
         # self.node.get_logger().info(f'🔔 State callback fired: armed={self.armed}, mode={self.mode}')
 
+    def home_callback(self, msg):
+        """Get ArduPilot's actual home position"""
+        # if self.home_lat == 0.0:
+        self.home_lat = msg.geo.latitude
+        self.home_lon = msg.geo.longitude
+        self.home_alt = msg.geo.altitude
+        self.node.get_logger().info(
+            f'✅ Home: {self.home_lat:.6f}, {self.home_lon:.6f}, {self.home_alt:.1f}m AMSL'
+        )
+
     def ned_to_gps(self, north, east):
         """
         Convert NED offsets to GPS coordinates
@@ -170,12 +196,12 @@ class MavrosInterface:
         self.current_lon = msg.longitude
         self.current_alt = msg.altitude
 
-        # Save home on first valid GPS
-        if self.home_lat == 0.0 and msg.latitude != 0.0:
-            self.home_lat = msg.latitude
-            self.home_lon = msg.longitude
-            self.home_alt = msg.altitude
-            self.node.get_logger().info(f'Home set: {self.home_lat:.6f}, {self.home_lon:.6f}')
+        # # Save home on first valid GPS
+        # if self.home_lat == 0.0 and msg.latitude != 0.0:
+        #     self.home_lat = msg.latitude
+        #     self.home_lon = msg.longitude
+        #     self.home_alt = msg.altitude
+        #     self.node.get_logger().info(f'Home set: {self.home_lat:.6f}, {self.home_lon:.6f}')
 
     def arm(self):
         """Arm the vehicle"""
@@ -244,26 +270,31 @@ class MavrosInterface:
 
         # Convert NED offsets to GPS
         lat, lon = self.ned_to_gps(north, east)
+        target_amsl = self.home_alt + alt
 
         msg = GeoPoseStamped()
         msg.header.stamp = self.node.get_clock().now().to_msg()
-        msg.header.frame_id = "map"
+        msg.header.frame_id = ""
         msg.pose.position.latitude = lat
         msg.pose.position.longitude = lon
-        msg.pose.position.altitude = self.home_alt + alt
 
-        yaw_rad = math.radians(yaw_deg)
+        msg.pose.position.altitude = target_amsl
+
+        yaw_enu_deg = 90.0 - yaw_deg
+        yaw_rad = math.radians(yaw_enu_deg)
         msg.pose.orientation.w = math.cos(yaw_rad / 2.0)
         msg.pose.orientation.x = 0.0
         msg.pose.orientation.y = 0.0
         msg.pose.orientation.z = math.sin(yaw_rad / 2.0)
+
+        self.node.get_logger().info(f'Sending AMSL: {target_amsl:.1f}m (home={self.home_alt:.1f}m + rel={alt:.1f}m)')
 
         # Publish 3 times for robustness
         for _ in range(3):
             self.setpoint_pub.publish(msg)
             rclpy.spin_once(self.node, timeout_sec=0.1)
 
-        self.node.get_logger().info(f'Goto position: {lat:.6f}, {lon:.6f}, {alt:.1f}m, Yaw={yaw_deg}°')
+        self.node.get_logger().info(f'Goto position: {lat:.6f}, {lon:.6f}, {alt:.1f}m, AMSL={target_amsl:.1f}m, Yaw={yaw_deg}°')
         return True
 
     def goto_neu(self, north, east, up, yaw_deg):

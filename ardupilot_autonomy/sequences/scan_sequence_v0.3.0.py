@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Yaw + Position Test Sequence v0.4.0
+Yaw + Position Test Sequence
 Based on scan_sequence_v0.1.0.py pattern.
 
 Sequence:
-  1. Yaw North / East / South / West (5s each, hold position)
-  2. Move 10m North / East / South / West (10s each, yaw calculated from direction of travel)
+  1. Sleep 30s
+  2. Yaw North / East / South / West (30s each, hold position)
+  3. Move 10m North / East / South / West (30s each, yaw North throughout)
 
-Logs NED offset + compass heading every 1 second. Never crashes on log failure.
+Logs NED offset + compass heading every 2 seconds. Never crashes on log failure.
 """
 
 import rclpy
@@ -18,7 +19,6 @@ from rcl_interfaces.srv import SetParameters
 from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
 from std_msgs.msg import Float64
 from geometry_msgs.msg import PoseStamped
-import math
 import time
 import sys
 
@@ -113,15 +113,6 @@ class YawTestSequence(Node):
             f'[yaw_test] Goto: N={north:.1f}  E={east:.1f}  Up={up:.1f}  Yaw={yaw_ned_deg:.0f}° NED'
         )
 
-    def _calc_yaw(self, from_n, from_e, to_n, to_e):
-        """Calculate NED yaw (degrees) from one point to another."""
-        dn = to_n - from_n
-        de = to_e - from_e
-        yaw = math.degrees(math.atan2(de, dn))
-        if yaw < 0:
-            yaw += 360.0
-        return yaw
-
     def _sleep_log(self, seconds, label=''):
         if label:
             self.get_logger().info(f'[yaw_test] {label}')
@@ -138,32 +129,28 @@ class YawTestSequence(Node):
 
         self.get_logger().info('[yaw_test] ===== Sequence started =====')
 
-        # Phase 1: yaw in place (5s each)
+        # Phase 1: initial hold
+        self._sleep_log(30, 'Phase 1: Initial hold')
+
+        # Phase 2: yaw in place
         for direction, yaw in [('North', 0), ('East', 90), ('South', 180), ('West', 270)]:
-            self.get_logger().info(f'[yaw_test] Phase 1: Yaw {direction} ({yaw}° NED)')
+            self.get_logger().info(f'[yaw_test] Phase 2: Yaw {direction} ({yaw}° NED)')
             self._goto(on, oe, ou, yaw)
-            self._sleep_log(5)
+            self._sleep_log(30)
 
-        # Return to origin
-        self.get_logger().info('[yaw_test] Return to origin')
+        # Phase 3: position moves, yaw North throughout
         self._goto(on, oe, ou, 0.0)
-        self._sleep_log(5)
+        self._sleep_log(30, 'Phase 3: Return to origin')
 
-        # Phase 2: position moves, yaw calculated from direction of travel (10s each)
-        waypoints = [
+        for direction, tn, te in [
             ('North', on + 10.0, oe),
             ('East',  on,        oe + 10.0),
             ('South', on - 10.0, oe),
             ('West',  on,        oe - 10.0),
-        ]
-
-        prev_n, prev_e = on, oe
-        for direction, tn, te in waypoints:
-            yaw = self._calc_yaw(prev_n, prev_e, tn, te)
-            self.get_logger().info(f'[yaw_test] Phase 2: Move {direction} 10m facing {yaw:.0f}°')
-            self._goto(tn, te, ou, yaw)
-            self._sleep_log(10)
-            prev_n, prev_e = tn, te
+        ]:
+            self.get_logger().info(f'[yaw_test] Phase 3: Move {direction} 10m')
+            self._goto(tn, te, ou, 0.0)
+            self._sleep_log(30)
 
         self.get_logger().info('[yaw_test] ===== Sequence complete =====')
         return True
