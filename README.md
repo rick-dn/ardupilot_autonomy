@@ -28,6 +28,10 @@ ros2 run ardupilot_autonomy scan_sequence --ros-args \
   -p spiral_turns:=3
 ```
 
+## Update: Yaw & Position Validation (March 2026)
+
+Validated NED yaw and position commands on physical hardware. Spiral scan worked in SITL but was unreliable physically due to `WPNAV_RADIUS` default (200cm) causing waypoint acceptance before movement. Fixed by setting `WPNAV_RADIUS=50`. Tested directional flight (N/E/S/W 10m) with yaw aligned to direction of travel — confirmed working on physical hardware.
+
 <<<<<<< HEAD
 ---
 =======
