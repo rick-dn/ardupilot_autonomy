@@ -11,7 +11,7 @@ This package provides a clean, service-based interface for controlling ArduPilot
 
 ### Repository Traffic
 
-![Visitor Count](https://visitor-badge.laobi.icu/badge?page_id=rick-dn.px4-autonomy&color=blue) ![Views and Clones](https://raw.githubusercontent.com/rick-dn/px4-autonomy/github-repo-stats/views_clones_graph.png)
+![Visitor Count](https://visitor-badge.laobi.icu/badge?page_id=rick-dn.px4-autonomy&color=blue)
 
 ## Update: Autonomous Flight Sequences
 
