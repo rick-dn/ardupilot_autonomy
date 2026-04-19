@@ -6,6 +6,13 @@ A Python ROS 2 package for autonomous drone control using ArduPilot and MAVROS.
 
 This package provides a clean, service-based interface for controlling ArduPilot drones through MAVROS. It implements position, velocity, and acceleration control modes with state machine validation, following design patterns from production autonomy systems.
 
+# px4_autonomy by Useful Dynamics
+[🚀 Visit Website](https://usefuldynamics.io)
+
+### Repository Traffic
+
+![Visitor Count](https://visitor-badge.laobi.icu/badge?page_id=rick-dn.px4-autonomy&color=blue) ![Views and Clones](https://raw.githubusercontent.com/rick-dn/px4-autonomy/github-repo-stats/views_clones_graph.png)
+
 ## Update: Autonomous Flight Sequences
 
 Added automated flight sequences for takeoff and coverage scanning. Actions, FSM state validation, and thread safety (semaphores/locks) are planned for next iteration.
