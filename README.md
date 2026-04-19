@@ -35,6 +35,26 @@ ros2 run ardupilot_autonomy scan_sequence --ros-args \
   -p spiral_turns:=3
 ```
 
+## Follow Me
+
+### Usage
+
+**1. Start the detector** (not included in this repo — bring your own detection node publishing to `/detections/persons`):
+
+**2. Run the follow node:**
+```bash
+ros2 run ardupilot_autonomy follow_node --ros-args -p kp:=0.005 -p max_velocity:=1.0 -p camera_topic:=/your/camera/topic
+```
+
+**Key parameters:**
+- `kp` — proportional gain (default: 0.005)
+- `max_velocity` — max velocity in m/s (default: 1.0)
+- `tolerance_px` — deadzone in pixels (default: 50)
+- `lost_target_timeout` — seconds before hovering on target loss (default: 5.0)
+- `control_rate` — control loop frequency in Hz (default: 50.0)
+
+> ⚠️ **Note:** The person detector node is not included in this repository. Any ROS 2 node publishing `vision_msgs/Detection2DArray` to `/detections/persons` will work.
+
 ## Update: Yaw & Position Validation (March 2026)
 
 Validated NED yaw and position commands on physical hardware. Spiral scan worked in SITL but was unreliable physically due to `WPNAV_RADIUS` default (200cm) causing waypoint acceptance before movement. Fixed by setting `WPNAV_RADIUS=50`. Tested directional flight (N/E/S/W 10m) with yaw aligned to direction of travel — confirmed working on physical hardware.
