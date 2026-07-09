@@ -26,6 +26,7 @@ class FollowMeNode(Node):
         self.declare_parameter('lost_target_timeout', 5.0)
         self.declare_parameter('outlier_threshold', 150.0)
         self.declare_parameter('control_rate', 50.0)
+        self.declare_parameter('camera_yaw_deg', -90.0)
 
         self.image_width = self.get_parameter('image_width').value
         self.image_height = self.get_parameter('image_height').value
@@ -35,6 +36,7 @@ class FollowMeNode(Node):
         self.lost_timeout = self.get_parameter('lost_target_timeout').value
         self.outlier_threshold = self.get_parameter('outlier_threshold').value
         control_rate = self.get_parameter('control_rate').value
+        self.camera_yaw = np.radians(self.get_parameter('camera_yaw_deg').value)
 
         # --- State ---
         self.latest_detection = None       # raw bbox from detector
@@ -140,7 +142,8 @@ class FollowMeNode(Node):
         vy = float(np.clip(self.kp * error_y, -self.max_vel, self.max_vel))
 
         # Yaw correction — rotate body frame velocity to world frame
-        psi = self.mavros.local_yaw
+        # psi = self.mavros.local_yaw
+        psi = self.mavros.local_yaw - self.camera_yaw # for camera yaw
         vx_world = vx * np.cos(psi) - vy * np.sin(psi)
         vy_world = vx * np.sin(psi) + vy * np.cos(psi)
 
