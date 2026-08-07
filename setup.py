@@ -56,6 +56,7 @@ setup(
             'test_gps = ardupilot_autonomy.sequences.test_gps_waypoint:main',
             'follow_node = ardupilot_autonomy.follow_node:main',
             'follow_node_unit_test = ardupilot_autonomy.follow_node_unit_test:main',
+            'aruco_landing_node = ardupilot_autonomy.aruco_landing_node:main',
         ],
     },
 )
