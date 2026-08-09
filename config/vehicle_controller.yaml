@@ -1,0 +1,14 @@
+vehicle_controller:
+  ros__parameters:
+    # Sanity-check bounds - operational values, tune per deployment.
+    takeoff_alt_min_m: 0.5
+    takeoff_alt_max_m: 30.0
+    goto_alt_min_m: 0.0
+    goto_alt_max_m: 50.0
+    max_body_step_m: 20.0
+    max_velocity_mps: 5.0
+    max_accel_mps2: 3.0
+
+    # Tick rates.
+    tick_rate_hz: 20.0
+    logger_rate_hz: 1.0
