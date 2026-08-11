@@ -3,12 +3,12 @@
 Vehicle Controller - owns the always-on core tick and is the sole caller into
 mavros_interface.
 
-Each tick is a fixed, straight-line sequence - no loops: read one atomic value
-from each known condition source, hand all of them to fsm_handler in a single
-call to arbitrate, dispatch the one command it picks (if any), and report the
-outcome back to whichever source raised the winning condition. fsm_handler
-owns both state-based permission and argument sanity-checking now - vc's
-dispatch is a single generic call per command, nothing bespoke here.
+Each tick is a fixed, straight-line sequence - no loops: take one consistent
+snapshot from safety_monitor and one request from fs_interface, hand both to
+fsm_handler in a single call to arbitrate, dispatch the one command it picks
+(if any), and report the outcome back. fsm_handler owns both state-based
+permission and argument sanity-checking now - vc's dispatch is a single generic
+call per command, nothing bespoke here.
 """
 
 import dataclasses
@@ -54,14 +54,19 @@ class VehicleController(Node):
     """
     Core tick + mavros_interface ownership.
     safety_monitor / fsm_handler / fs_interface expected interface:
-      safety_monitor.rc_throttle_status_atomic() -> (condition_name, token, command)
-      safety_monitor.geofence_atomic()           -> (condition_name, token, command)
-      safety_monitor.rc_loss_atomic()            -> (condition_name, token, command)
-      safety_monitor.battery_atomic()            -> (condition_name, token, command)
-      safety_monitor.fc_state_atomic()           -> (condition_name, token, command)
-      fs_interface.fs_adapter_atomic()           -> (condition_name, token, command)
-      fsm_handler.arbitrate(request_list) -> (condition_name, command, token, reason)
-      fs_interface.report(cmd_status, condition_name, command, token, reason) -> None
+      safety_monitor.snapshot()        -> (fc_state, {condition_name: (token, command)})
+      fs_interface.fs_adapter_atomic() -> (token, command)
+      fsm_handler.arbitrate(fc_state, safety_requests, fs_request)
+                                       -> (cmd_status, cond, command, token)
+      fs_interface.report(cmd_status, cond, command, token, dispatched) -> None
+
+    cmd_status is ACCEPTED/REJECTED/IDLE and describes fs_adapter's submission,
+    not the dispatch - IDLE still carries a command when safety raised one.
+
+    safety_monitor evaluates all five of its conditions on one thread in a
+    single pass, so they're read back as one object rather than one call each -
+    five separate reads could otherwise straddle a write and mix values from
+    two different evaluation cycles.
 
     fs_interface.report() fires every tick without exception - it's a
     heartbeat, not a conditional notification - so it always knows current
@@ -91,15 +96,12 @@ class VehicleController(Node):
         # their own.
         self.safety_monitor = SafetyMonitor(self.mavros_interface)
         self.safety_monitor.start()
-        self.fsm_handler = FsmHandler(
-            takeoff_alt_min_m=self.get_parameter('takeoff_alt_min_m').value,
-            takeoff_alt_max_m=self.get_parameter('takeoff_alt_max_m').value,
-            goto_alt_min_m=self.get_parameter('goto_alt_min_m').value,
-            goto_alt_max_m=self.get_parameter('goto_alt_max_m').value,
-            max_body_step_m=self.get_parameter('max_body_step_m').value,
-            max_velocity_mps=self.get_parameter('max_velocity_mps').value,
-            max_accel_mps2=self.get_parameter('max_accel_mps2').value,
-        )
+        self.fsm_handler = FsmHandler({
+            name: self.get_parameter(name).value
+            for name in ('takeoff_alt_min_m', 'takeoff_alt_max_m',
+                         'goto_alt_min_m', 'goto_alt_max_m',
+                         'max_body_step_m', 'max_velocity_mps', 'max_accel_mps2')
+        })
         self.fs_interface = FsInterface(self.mavros_interface)
 
         self.declare_parameter('tick_rate_hz', 20.0)
@@ -119,29 +121,25 @@ class VehicleController(Node):
     def tick(self):
         """
         Core tick - always on, fixed rate, never blocks, no loops.
-        Six explicit atomic reads, one arbitration call, one dispatch,
-        one report. That's the whole tick.
+        Two atomic reads, one arbitration call, one dispatch, one report.
+        That's the whole tick.
         """
         self.fs_interface.publish_telemetry()
 
-        request_list = []
-        request_list.append(self.safety_monitor.rc_throttle_status_atomic())
-        request_list.append(self.safety_monitor.geofence_atomic())
-        request_list.append(self.safety_monitor.rc_loss_atomic())
-        request_list.append(self.safety_monitor.battery_atomic())
-        request_list.append(self.safety_monitor.fc_state_atomic())
-        request_list.append(self.fs_interface.fs_adapter_atomic())
+        fc_state, safety_requests = self.safety_monitor.snapshot()
+        fs_request = self.fs_interface.fs_adapter_atomic()
 
-        cond, command, token, reason = self.fsm_handler.arbitrate(request_list)
+        cmd_status, cond, command, token = self.fsm_handler.arbitrate(
+            fc_state, safety_requests, fs_request)
 
-        cmd_status = False
+        dispatched = False
         if command:
-            cmd_status = self._dispatch(command)
+            dispatched = self._dispatch(command)
 
         # Always fires, every tick, regardless of whether anything was dispatched -
         # acts as a heartbeat so producers stay aware of current status even on
         # ticks where nothing happened.
-        self.fs_interface.report(cmd_status, cond, command, token, reason)
+        self.fs_interface.report(cmd_status, cond, command, token, dispatched)
 
     def _dispatch(self, command: Command) -> bool:
         """
@@ -151,7 +149,10 @@ class VehicleController(Node):
         """
         method_name = COMMAND_TO_METHOD.get(command.name)
         if method_name is None:
-            self.get_logger().error(f'Unknown command: {command.name}')
+            # Throttled - a stuck producer would otherwise repeat this at the
+            # full tick rate.
+            self.get_logger().error(
+                f'Unknown command: {command.name}', throttle_duration_sec=1.0)
             return False
         getattr(self.mavros_interface, method_name)(**command.params)
         return True
@@ -169,7 +170,7 @@ class VehicleController(Node):
         lp = t['local_position']    # ENU, world frame
         vel = t['velocity_body']    # RFU, body frame
         bat = t['battery']
-        _, _, fc = self.safety_monitor.fc_state_atomic()
+        fc, _ = self.safety_monitor.snapshot()
         self.get_logger().info(
             f"pos=(E={lp['east']:.2f},N={lp['north']:.2f},U={lp['up']:.2f}) "
             f"vel=(R={vel['right']:.2f},F={vel['forward']:.2f},U={vel['up']:.2f}) "
