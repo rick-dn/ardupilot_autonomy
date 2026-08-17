@@ -1,190 +1,179 @@
 # ArduPilot Autonomy
 
-A Python ROS 2 package for autonomous drone control using ArduPilot and MAVROS.
+A ROS 2 workspace for testing and developing autonomous flight sequences on
+ArduPilot, over MAVROS. By [Useful Dynamics](https://usefuldynamics.io).
 
-## Overview
+This is a development and test bench, not a finished product. The flight stack is
+deliberately stateless: it executes one command at a time and reports what it
+sees. Sequencing, retries, and mission logic live in the flight commander, above
+the topic contract.
 
-This package provides a clean, service-based interface for controlling ArduPilot drones through MAVROS. It implements position, velocity, and acceleration control modes with state machine validation, following design patterns from production autonomy systems.
+## Architecture
 
-# px4_autonomy by Useful Dynamics
-[🚀 Visit Website](https://usefuldynamics.io)
-
-### Repository Traffic
-
-![Visitor Count](https://visitor-badge.laobi.icu/badge?page_id=rick-dn.px4-autonomy&color=blue)
-
-## Update: Autonomous Flight Sequences
-
-Added automated flight sequences for takeoff and coverage scanning. Actions, FSM state validation, and thread safety (semaphores/locks) are planned for next iteration.
-
-**Run sequences:**
-```bash
-# Automated takeoff to 5m
-ros2 run ardupilot_autonomy takeoff_sequence
-
-# takeoff to custom altitude
-ros2 run ardupilot_autonomy takeoff_sequence --ros-args -p takeoff_altitude:=10.0
-
-# Spiral coverage scan (run after takeoff)
-ros2 run ardupilot_autonomy scan_sequence
-
-# Configure scan parameters
-ros2 run ardupilot_autonomy scan_sequence --ros-args \
-  -p scan_radius:=10.0 \
-  -p waypoint_spacing:=2.5 \
-  -p spiral_turns:=3
+```
+browser GUI ──MQTT ws:9001──┐
+                            ├── broker :1883 ── udl_aa_fc ──/vehicle/command──┐
+            udl_aa_gcs/*  ──┘      (gui_link)   (commander)                   │
+                                                                        udl_aa_fs
+                                        ◄──/vehicle/telemetry, /vehicle/status─┤
+                                                                              │
+                                                                  MAVROS ── ArduPilot
 ```
 
-## Follow Me
+| Package | Role |
+|---|---|
+| `ardu_ws/src/udl_aa_fs` | Flight stack. `vehicle_controller` node — owns the MAVROS connection, FSM arbitration, and safety monitoring. |
+| `ardu_ws/src/udl_aa_msgs` | Interface definitions. Build first; dependents link against the generated code. |
+| `ardu_ws/src/udl_aa_fc` | Flight commander. `udl_aa_fc` node, plus four standalone test scripts. |
+| `tools/gui` | Browser ground station (`udl-aa-gcs.html`), MQTT over websocket. |
 
-### Usage
+### Topic contract
 
-**1. Start the detector** (not included in this repo — bring your own detection node publishing to `/detections/persons`):
+| Topic | Type | Direction |
+|---|---|---|
+| `/vehicle/command` | `VehicleCommand` | commander → stack |
+| `/vehicle/status` | `VehicleStatus` | stack → commander |
+| `/vehicle/telemetry` | `VehicleTelemetry` | stack → commander |
 
-**2. Run the follow node:**
-```bash
-ros2 run ardupilot_autonomy follow_node --ros-args -p kp:=0.005 -p max_velocity:=1.0 -p camera_topic:=/your/camera/topic
-```
+The GUI leg is separate, carried over MQTT rather than ROS: `udl_aa_gcs/cmd`,
+`udl_aa_gcs/telemetry`, `udl_aa_gcs/log`.
 
-**Key parameters:**
-- `kp` — proportional gain (default: 0.005)
-- `max_velocity` — max velocity in m/s (default: 1.0)
-- `tolerance_px` — deadzone in pixels (default: 50)
-- `lost_target_timeout` — seconds before hovering on target loss (default: 5.0)
-- `control_rate` — control loop frequency in Hz (default: 50.0)
+## Inside the flight stack
 
-> ⚠️ **Note:** The person detector node is not included in this repository. Any ROS 2 node publishing `vision_msgs/Detection2DArray` to `/detections/persons` will work.
+### Four-axis FSM handler
 
-## Update: Yaw & Position Validation (March 2026)
+Every command is arbitrated through four explicit pass/fail gates, evaluated in
+order and short-circuiting on the first failure. The ordering *is* the command
+chain — an axis is only reached once every axis above it has passed.
 
-Validated NED yaw and position commands on physical hardware. Spiral scan worked in SITL but was unreliable physically due to `WPNAV_RADIUS` default (200cm) causing waypoint acceptance before movement. Fixed by setting `WPNAV_RADIUS=50`. Tested directional flight (N/E/S/W 10m) with yaw aligned to direction of travel — confirmed working on physical hardware.
+| # | Axis | Gate |
+|---|---|---|
+| 1 | `fc_state` | The stack commands only in GUIDED. Any other mode stops the chain outright — safety included. |
+| 2 | `safety` | Throttle status, geofence, RC loss, battery. An active condition issues its own command and stops the chain, bypassing axes 3 and 4. |
+| 3 | `command state` | An `(armed, in_air)` permission table. `ARM` when disarmed; `TAKEOFF`/`DISARM` when armed on ground; goto/velocity/accel/land/RTL only in air. |
+| 4 | `sanity` | The submitted arguments against configured limits — altitude bounds, body-step distance, velocity and acceleration magnitude, finite-value checks. |
 
-<<<<<<< HEAD
----
-=======
->>>>>>> 059e8afc4ff68945ac827a1d54279b6901f406bb
+The handler is pure: no thread of its own, no `rclpy` dependency, nothing
+remembered between calls. It is invoked synchronously from the controller's
+tick, so the same inputs always produce the same decision.
 
-## Features
+It returns a four-part decision — the submission's outcome
+(`ACCEPTED` / `REJECTED` / `IDLE`), the accumulated condition names, the one
+command to dispatch, and the caller's token passed back for matching. Outcome
+and command are independent: a `REJECTED` carrying a command means safety
+outranked the submission.
 
-- **Position Control**: GPS-based waypoint navigation with yaw control
-- **Velocity Control**: Body-frame velocity commands for dynamic maneuvers
-- **Acceleration Control**: NED-frame acceleration for agile flight
-- **State Machine**: FSM-based validation to prevent unsafe operations
-- **Fire-and-Forget**: Asynchronous command pattern for responsive control
+When several safety conditions fire at once, severity decides
+(`LAND` > `RTL` > `WAYPOINT_CMD` > `WARNING`), with condition priority as
+tiebreak. A `WARNING`-tier entry names itself without winning — it is
+information, not an override. Every active condition is reported, not just the
+winner, since that list is what the operator sees.
 
-## Installation
-```bash
-cd ~/ardu_ws/src
-git clone <your-repo>
-cd ~/ardu_ws
-colcon build --packages-select ardupilot_autonomy
-source install/setup.bash
-```
+### Safety awareness
+
+The safety monitor runs its own thread, decoupled from the controller's tick
+rate, and evaluates all conditions in a single pass. It exposes one snapshot
+object via a non-blocking atomic read, so the tick always arbitrates over an
+internally consistent set rather than picking up half its values from one
+evaluation cycle and half from the next.
+
+**Current status:** the framework, arbitration, and severity ranking are in
+place and exercised end to end. `fc_state` is fully wired — mode, armed, and
+in-air all derive from live telemetry. The individual safety sequences
+(geofence, battery, RC loss, throttle status) are **still being developed** and
+currently sit as inactive stubs that never trigger.
+
+## Sequences in development
+
+Both are flight-proven in their earlier standalone form and are being ported
+onto the `/vehicle` topic contract. They live in `udl_aa_fc/sequences/backup/`
+and are **not yet plumbed into the commander** — they will be included shortly.
+
+### Follow person — *flight tested*
+
+Image-based visual servoing onto a detected person. A four-state constant-velocity
+Kalman filter tracks the bounding-box centroid, smoothing detection jitter and
+coasting through dropped frames; outlier rejection discards detections that jump
+too far from the prediction, and a lost-target timeout falls back to hover.
+Velocity commands are yaw-corrected for camera mounting angle.
+
+The detector is **not** included — any node publishing
+`vision_msgs/Detection2DArray` on `/detections/persons` will drive it.
+
+- [Flight test](https://www.youtube.com/shorts/YHh4Hv-ZMoA)
+- [SITL test](https://www.youtube.com/watch?v=sQa5da0TWBg)
+
+### ArUco landing — *tested in SITL*
+
+Precision landing onto a marker, phased `SCAN → HOVER_CAPTURE → APPROACH →
+autopilot LAND`. The capture phase gates on a sliding detection window with
+recency and coherence floors, then arms or abandons on a confidence threshold,
+so a brief false positive cannot commit the vehicle to a descent. Approach
+aligns yaw within a few degrees before descending at a fixed rate to the
+handover altitude, where the autopilot's own LAND takes over.
+
+- [SITL test](https://www.youtube.com/watch?v=ZdOmPALt-c0)
 
 ## Dependencies
 
 - ROS 2 Humble
-- ArduPilot SITL or real hardware
 - MAVROS
-- geographiclib (Python): `pip install geographiclib`
+- ArduPilot SITL or real hardware
+- An MQTT broker with a websocket listener on 9001 (TCP 1883) — nothing reaches
+  the GUI without it
+- `pip install paho-mqtt geographiclib numpy`
 
-## Usage
+## Build
 
-### Start MAVROS
+Message definitions first — a stale generated interface is the usual cause of an
+import that fails only at runtime.
+
 ```bash
+bash scripts/build_msgs.sh          # udl_aa_msgs, always from clean
+bash scripts/launch_fs.sh --build   # builds, then launches the flight stack
+bash scripts/launch_fc.sh --build   # builds, then launches the commander
+```
+
+Rebuild both dependents in a freshly sourced shell after any `.msg` change.
+
+## Running
+
+```bash
+# 1. MAVROS against SITL
 ros2 run mavros mavros_node --ros-args -p fcu_url:=udp://:14550@localhost:14555
+
+# 2. Flight stack
+bash scripts/launch_fs.sh
+
+# 3. Flight commander
+bash scripts/launch_fc.sh
+
+# 4. Open tools/gui/udl-aa-gcs.html in a browser
 ```
 
-### Start Vehicle Interface
+### Test scripts
+
+Standalone: each owns its node, runs start to finish, and confirms nothing. They
+bypass the commander entirely.
+
 ```bash
-ros2 run ardupilot_autonomy vehicle_interface
+bash scripts/launch_fc.sh --target 1   # test_goto_local   ENU diamond around origin
+bash scripts/launch_fc.sh --target 2   # test_goto_body    RFU cross, spin at each end
+bash scripts/launch_fc.sh --target 3   # test_velocity     ENU diamond on timed legs
+bash scripts/launch_fc.sh --target 4   # test_goto_global  WGS-84 waypoints from GCS clicks
 ```
 
-### Basic Flight Sequence
+## Documentation
 
-**1. Set GUIDED mode and arm:**
-```bash
-ros2 service call /vehicle/set_guided_mode std_srvs/srv/Trigger
-ros2 service call /vehicle/arm std_srvs/srv/Trigger
-```
-
-**2. Takeoff:**
-```bash
-ros2 param set /vehicle_interface takeoff_altitude 10.0
-ros2 service call /vehicle/takeoff std_srvs/srv/Trigger
-```
-
-**3. Navigate to position (North/East offsets from home):**
-```bash
-ros2 param set /vehicle_interface goto_north 50.0
-ros2 param set /vehicle_interface goto_east 30.0
-ros2 param set /vehicle_interface goto_up 10.0
-ros2 param set /vehicle_interface goto_yaw 45.0
-ros2 service call /vehicle/goto_position std_srvs/srv/Trigger
-```
-
-**4. Velocity control:**
-```bash
-ros2 param set /vehicle_interface vel_x 1.0    # Forward 1 m/s
-ros2 param set /vehicle_interface vel_y 0.0
-ros2 param set /vehicle_interface vel_z 0.0
-ros2 param set /vehicle_interface vel_yaw_rate 0.0
-ros2 service call /vehicle/velocity_start std_srvs/srv/Trigger
-
-# Stop velocity
-ros2 service call /vehicle/velocity_stop std_srvs/srv/Trigger
-```
-
-**5. Land or RTL:**
-```bash
-ros2 service call /vehicle/land std_srvs/srv/Trigger
-# OR
-ros2 service call /vehicle/rtl std_srvs/srv/Trigger
-```
-
-## Available Services
-
-| Service | Description |
-|---------|-------------|
-| `/vehicle/set_guided_mode` | Switch to GUIDED mode |
-| `/vehicle/arm` | Arm motors |
-| `/vehicle/disarm` | Disarm motors |
-| `/vehicle/takeoff` | Takeoff to specified altitude |
-| `/vehicle/goto_position` | Navigate to GPS position (using N/E offsets) |
-| `/vehicle/goto_neu` | Navigate to local NEU position |
-| `/vehicle/velocity_start` | Start velocity control |
-| `/vehicle/velocity_stop` | Stop velocity control |
-| `/vehicle/accel_start` | Start acceleration control |
-| `/vehicle/accel_stop` | Stop acceleration control |
-| `/vehicle/land` | Land at current position |
-| `/vehicle/rtl` | Return to launch |
-
-## Architecture
-```
-ardupilot_autonomy/
-├── mavros_interface.py    # MAVROS communication wrapper
-├── vehicle_interface.py   # Main orchestrator with services
-└── state_machine.py       # FSM validation logic
-```
-
-## Future Development
-
-- **Robust State Machine**: Expand to 20+ states with full transition graph validation
-- **ROS 2 Actions**: Implement action servers with real-time feedback, monitoring loops, and cancellation support for takeoff, land, goto, and orbit operations
-- **Thread Safety**: Add semaphores and locks for concurrent action handling
+- [`docs/flight_stack_interface.md`](docs/flight_stack_interface.md) — the full
+  topic interface, and how to build multi-step sequences on a stateless stack
+- [`docs/sitl_reference.md`](docs/sitl_reference.md) — SITL parameters and
+  measured topic rates
 
 ## License
 
-This project is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
+Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+([CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)).
 
-**You are free to:**
-- Share and adapt the code for non-commercial purposes
-
-**Under the following terms:**
-- Attribution required
-- Non-commercial use only
-- Share derivatives under the same license
-
-For commercial licensing inquiries, contact: your.email@example.com
-
-[Full License Text](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+Share and adapt for non-commercial purposes, with attribution, under the same
+license. For commercial licensing: hello@usefuldynamics.io
