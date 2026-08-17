@@ -1,0 +1,30 @@
+# ROS 2 workspace build artifacts
+ardu_ws/build/
+ardu_ws/install/
+ardu_ws/log/
+
+# Excluded trees
+archive/
+python_packages/
+.claude/
+
+# tools/: only gui is tracked
+tools/*
+!tools/gui/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Backup files
+*.bak
+*.orig

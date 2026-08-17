@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>UDL AA GCS</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="app">
+
+  <div class="telem">
+    <span class="telem-line state" id="lineState">mode — · mission —</span>
+    <span class="telem-line" id="linePose">E — N — U — yaw —</span>
+    <span class="telem-line" id="lineVel">vE — vN — vU —</span>
+    <span class="telem-line" id="lineHealth">batt — · disarmed · ground</span>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <div class="controls">
+    <!-- LEFT: throttle (vz) + yaw -->
+    <div class="pad-wrap">
+      <div class="dpad">
+        <div class="dbtn empty"></div>
+        <button class="dbtn arrow" data-vel="vz+">▲</button>
+        <div class="dbtn empty"></div>
+        <button class="dbtn yaw" data-vel="yaw+">⟲</button>
+        <div class="dbtn center">ALT<br>YAW</div>
+        <button class="dbtn yaw" data-vel="yaw-">⟳</button>
+        <div class="dbtn empty"></div>
+        <button class="dbtn arrow" data-vel="vz-">▼</button>
+        <div class="dbtn empty"></div>
+      </div>
+      <span class="pad-label">throttle / yaw</span>
+    </div>
+
+    <!-- RIGHT: translation -->
+    <div class="pad-wrap">
+      <div class="dpad">
+        <div class="dbtn empty"></div>
+        <button class="dbtn arrow" data-vel="vy+">▲</button>
+        <div class="dbtn empty"></div>
+        <button class="dbtn arrow" data-vel="vx-">◀</button>
+        <div class="dbtn center">MOVE</div>
+        <button class="dbtn arrow" data-vel="vx+">▶</button>
+        <div class="dbtn empty"></div>
+        <button class="dbtn arrow" data-vel="vy-">▼</button>
+        <div class="dbtn empty"></div>
+      </div>
+      <span class="pad-label">translation</span>
+    </div>
+  </div>
+
+  <div class="sequences">
+    <button class="seq-btn takeoff"       data-sequence="takeoff">TAKEOFF</button>
+    <button class="seq-btn smart_rtl"     data-sequence="smart_rtl">SMART<br>RTL</button>
+    <button class="seq-btn smart_land"    data-sequence="smart_land">SMART<br>LAND</button>
+    <button class="seq-btn follow"        data-sequence="follow">FOLLOW</button>
+    <button class="seq-btn aruco_landing" data-sequence="aruco_landing">ARUCO<br>LANDING</button>
+    <button class="seq-btn placeholder" disabled>—</button>
+    <button class="seq-btn placeholder" disabled>—</button>
+    <button class="seq-btn placeholder" disabled>—</button>
+    <button class="seq-btn placeholder" disabled>—</button>
+  </div>
+
+  <button class="abort" id="abortBtn">ABORT</button>
+</div>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

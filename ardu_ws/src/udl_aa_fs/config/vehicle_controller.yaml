@@ -1,0 +1,22 @@
+vehicle_controller:
+  ros__parameters:
+    # Sanity-check bounds - operational values, tune per deployment.
+    takeoff_alt_min_m: 0.5
+    takeoff_alt_max_m: 30.0
+    goto_alt_min_m: 0.0
+    goto_alt_max_m: 50.0
+    max_body_step_m: 20.0
+    max_velocity_mps: 5.0
+    max_accel_mps2: 3.0
+
+    # Tick rates. telemetry_rate_hz is deliberately well below tick_rate_hz -
+    # the fastest MAVROS group feeding get_telemetry() measures ~3Hz.
+    tick_rate_hz: 20.0
+    logger_rate_hz: 1.0
+    telemetry_rate_hz: 5.0
+
+    # How long /mavros/state may go silent before the whole telemetry snapshot
+    # reverts to its startup values and fc_state reports UNKNOWN. Must exceed
+    # the message period - measured ~1.06 s, worst observed 1.27 s - or it
+    # false-triggers. 3.0 s tolerates two missed heartbeats.
+    fc_state_timeout_s: 3.0
