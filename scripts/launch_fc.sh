@@ -8,10 +8,12 @@
 #   --target 2   test_goto_body    RFU cross with a spin at each end
 #   --target 3   test_velocity     ENU diamond flown on timed velocity legs
 #   --target 4   test_goto_global  WGS-84 waypoints from GCS clicks
+#   --target 5   aruco_lander      scan for the marker, settle, servo down
 #
 # The test scripts are standalone: each owns its node, runs start to finish,
 # and confirms nothing. They are not sequences and the commander knows nothing
-# about them.
+# about them. Target 5 is the exception to "runs start to finish": it is closed
+# loop on the detector and ends when it hands off to LAND, or on ctrl-C.
 #
 # Flags can come in either order.
 
@@ -38,7 +40,8 @@ case "$TARGET" in
     2) EXECUTABLE="test_goto_body" ;;
     3) EXECUTABLE="test_velocity" ;;
     4) EXECUTABLE="test_goto_global" ;;
-    *) echo "❌ Unknown target: $TARGET (expected 1-4, or none)"; exit 1 ;;
+    5) EXECUTABLE="aruco_lander" ;;
+    *) echo "❌ Unknown target: $TARGET (expected 1-5, or none)"; exit 1 ;;
 esac
 
 echo "📂 Changing to workspace..."

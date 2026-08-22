@@ -30,6 +30,7 @@ setup(
             'test_goto_body = udl_aa_fc.sequences.test.test_goto_body:main',
             'test_velocity = udl_aa_fc.sequences.test.test_velocity:main',
             'test_goto_global = udl_aa_fc.sequences.test.test_goto_global:main',
+            'aruco_lander = udl_aa_fc.sequences.test.aruco_lander:main',
         ],
     },
 )

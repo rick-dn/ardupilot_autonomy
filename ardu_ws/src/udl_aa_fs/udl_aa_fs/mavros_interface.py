@@ -298,24 +298,15 @@ class MavrosInterface:
         self.local_z = 0.0
         self.local_yaw = 0.0
 
-        # Velocity control state
-        self.target_vx = 0.0
-        self.target_vy = 0.0
-        self.target_vz = 0.0
-        self.target_vyaw = 0.0
-
-        # Acceleration control state
-        self.target_ax = 0.0
-        self.target_ay = 0.0
-        self.target_az = 0.0
-
-        # Setpoint streaming timers are created on demand by set_velocity() /
-        # set_acceleration() and destroyed by their stop_*() counterparts.
-        # Nothing is published until something is actually commanded - a
-        # standing stream of zero setpoints would otherwise hold the vehicle
-        # in GUIDED and override commands issued from elsewhere.
-        self.velocity_timer = None
-        self.accel_timer = None
+        # Setpoints are published once per command, never streamed. ArduPilot's
+        # GUID_TIMEOUT (3 s) stops the vehicle when setpoints stop arriving, so
+        # a caller that wants to hold a velocity refreshes it and one that goes
+        # silent - or dies - is stopped by the flight controller itself.
+        #
+        # Streaming them here would defeat that: a repeating timer keeps feeding
+        # ArduPilot so the timeout never fires, and a standing stream of zero
+        # setpoints holds the vehicle in GUIDED and overrides commands issued
+        # from elsewhere. Nothing is published unless something is commanded.
 
         self.node.get_logger().info('MAVROS Interface initialized')
 
@@ -662,42 +653,27 @@ class MavrosInterface:
             up: Up velocity (m/s)
             yaw_rate: Yaw rate, CCW positive (rad/s)
         """
-        self.target_vx = east
-        self.target_vy = north
-        self.target_vz = up
-        self.target_vyaw = yaw_rate
-
-        if self.velocity_timer is None:
-            self.velocity_timer = self.node.create_timer(0.1, self.publish_velocity)
-
+        self.publish_velocity(east, north, up, yaw_rate)
         self.node.get_logger().info(
             f'Velocity: E={east:.2f}, N={north:.2f}, U={up:.2f}, yaw_rate={yaw_rate:.2f}'
         )
 
     def stop_velocity(self):
-        """Stop velocity control and stop streaming setpoints"""
-        self.target_vx = 0.0
-        self.target_vy = 0.0
-        self.target_vz = 0.0
-        self.target_vyaw = 0.0
+        """Stop by commanding zero, once.
 
-        # Publish the zeroed setpoint explicitly before tearing the timer down,
-        # so the last thing on the wire is a commanded stop rather than the
-        # previous non-zero velocity left to expire on ArduPilot's timeout.
-        if self.velocity_timer is not None:
-            self.publish_velocity()
-            self.node.destroy_timer(self.velocity_timer)
-            self.velocity_timer = None
-
+        Faster than waiting out GUID_TIMEOUT, and a single message rather than
+        a stream, so it stops the vehicle without holding it in GUIDED.
+        """
+        self.publish_velocity(0.0, 0.0, 0.0, 0.0)
         self.node.get_logger().info('Velocity control stopped')
 
-    def publish_velocity(self):
-        """Publish velocity setpoint at 10Hz"""
+    def publish_velocity(self, east, north, up, yaw_rate):
+        """Publish one velocity setpoint. ENU, yaw_rate CCW positive."""
         msg = Twist()
-        msg.linear.x = self.target_vx
-        msg.linear.y = self.target_vy
-        msg.linear.z = self.target_vz
-        msg.angular.z = self.target_vyaw
+        msg.linear.x = east
+        msg.linear.y = north
+        msg.linear.z = up
+        msg.angular.z = yaw_rate
         self.vel_pub.publish(msg)
 
     def set_acceleration(self, east, north, up):
@@ -708,40 +684,24 @@ class MavrosInterface:
             north: North acceleration (m/s²)
             up: Up acceleration (m/s²)
         """
-        self.target_ax = east
-        self.target_ay = north
-        self.target_az = up
-
-        if self.accel_timer is None:
-            self.accel_timer = self.node.create_timer(0.1, self.publish_accel)
-
+        self.publish_accel(east, north, up)
         self.node.get_logger().info(
             f'Acceleration: E={east:.2f}, N={north:.2f}, U={up:.2f}'
         )
 
     def stop_acceleration(self):
-        """Stop acceleration control and stop streaming setpoints"""
-        self.target_ax = 0.0
-        self.target_ay = 0.0
-        self.target_az = 0.0
-
-        # Same reasoning as stop_velocity(): command the stop explicitly
-        # before the stream ends.
-        if self.accel_timer is not None:
-            self.publish_accel()
-            self.node.destroy_timer(self.accel_timer)
-            self.accel_timer = None
-
+        """Same reasoning as stop_velocity(): command zero, once."""
+        self.publish_accel(0.0, 0.0, 0.0)
         self.node.get_logger().info('Acceleration control stopped')
 
-    def publish_accel(self):
-        """Publish acceleration setpoint at 10Hz"""
+    def publish_accel(self, east, north, up):
+        """Publish one acceleration setpoint. ENU."""
         msg = Vector3Stamped()
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.header.frame_id = "map"
-        msg.vector.x = self.target_ax
-        msg.vector.y = self.target_ay
-        msg.vector.z = self.target_az
+        msg.vector.x = east
+        msg.vector.y = north
+        msg.vector.z = up
         self.accel_pub.publish(msg)
 
     def land(self):

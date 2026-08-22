@@ -13,14 +13,20 @@
 html,body{height:100%;margin:0;background:var(--panel-bg);font-family:var(--sans);overflow:hidden;touch-action:manipulation;}
 .app{display:flex;flex-direction:column;height:100dvh;height:100vh;}
 
-.telem{flex:0 0 22%;background:linear-gradient(180deg,var(--sky-top),var(--sky-bottom));display:flex;flex-direction:column;gap:6px;padding:12px 16px;}
-.telem-line{font-family:var(--mono);font-size:11px;letter-spacing:0.10em;color:rgba(20,24,29,0.62);}
-.telem-line.state{color:rgba(20,24,29,0.85);font-weight:600;letter-spacing:0.14em;text-transform:uppercase;}
+/* Telemetry and the sequence log share one sky panel: both are the vehicle
+   talking back, so they read as one region rather than two. */
+.head{flex:0 0 38%;min-height:0;display:flex;flex-direction:column;background:linear-gradient(180deg,var(--sky-top),var(--sky-bottom));}
 
-/* Sequence log. Append-only, newest at the bottom, auto-scrolled. */
-.log{flex:0 0 78px;overflow-y:auto;background:var(--panel-bg-alt);border-top:1px solid var(--btn-border);padding:6px 14px;font-family:var(--mono);font-size:10.5px;line-height:1.55;color:var(--text-muted);user-select:text;}
+.telem{flex:0 0 auto;display:flex;flex-direction:column;gap:8px;padding:18px 16px 14px;text-align:center;}
+.telem-line{font-family:var(--mono);font-size:13px;letter-spacing:0.08em;color:rgba(20,24,29,0.70);}
+.telem-line.state{font-size:15px;color:rgba(20,24,29,0.88);font-weight:700;letter-spacing:0.12em;text-transform:uppercase;}
+
+/* Sequence log. Append-only, newest at the bottom, auto-scrolled. Left-aligned
+   against the centred telemetry above it - lines vary in length and centring
+   them makes a running log hard to scan. */
+.log{flex:1;min-height:0;overflow-y:auto;padding:9px 16px 12px;border-top:1px solid rgba(20,24,29,0.14);font-family:var(--mono);font-size:11px;line-height:1.6;color:rgba(20,24,29,0.55);user-select:text;}
 .log-line{white-space:pre-wrap;word-break:break-word;}
-.log-line:last-child{color:var(--text-primary);}
+.log-line:last-child{color:rgba(20,24,29,0.88);}
 
 .controls{flex:1;display:flex;align-items:center;justify-content:space-around;padding:8px;min-height:0;}
 .pad-wrap{display:flex;flex-direction:column;align-items:center;gap:6px;}

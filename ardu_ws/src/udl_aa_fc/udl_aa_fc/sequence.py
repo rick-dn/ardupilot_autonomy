@@ -41,8 +41,13 @@ class Sequence:
     # The commander calls these
     # ------------------------------------------------------------------
 
-    def on_start(self):
-        """Reset phase state and open whatever the run needs."""
+    def on_start(self, params=None):
+        """Reset phase state and open whatever the run needs.
+
+        `params` is whatever the operator sent with the start request, or None.
+        Most sequences are self-contained and ignore it; the manual pad uses it
+        to carry the axis the operator pressed.
+        """
 
     def update(self):
         """One tick. Returns RUNNING, COMPLETE or ABORT."""

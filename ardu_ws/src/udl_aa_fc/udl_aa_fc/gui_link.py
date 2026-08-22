@@ -31,12 +31,24 @@ TOPIC_TELEMETRY = 'udl_aa_gcs/telemetry'
 TOPIC_LOG = 'udl_aa_gcs/log'
 
 
+START = 'start'
+STOP = 'stop'
+ABORT = 'abort'
+
+
 @dataclasses.dataclass
 class GuiRequest:
-    """start=True runs `name`; start=False is an abort and carries no name."""
+    """One operator action.
 
-    start: bool
+    START runs `name`, optionally with `params` - the d-pad carries its axis
+    that way. STOP ends whatever is running and starts nothing, which is what a
+    released d-pad button sends. ABORT ends it and hands over to the abort
+    sequence. Only START uses `name` and `params`.
+    """
+
+    action: str
     name: str
+    params: dict
 
 
 class GuiLink:
@@ -69,12 +81,11 @@ class GuiLink:
             return
 
         action = payload.get('action')
-        if action == 'start':
-            request = GuiRequest(True, payload.get('name', ''))
-        elif action == 'abort':
-            request = GuiRequest(False, '')
-        else:
+        if action not in (START, STOP, ABORT):
             return
+        request = GuiRequest(action,
+                             payload.get('name', ''),
+                             payload.get('params') or {})
 
         with self._lock:
             self._latest = request   # overwrite: newest wins

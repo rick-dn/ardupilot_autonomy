@@ -18,5 +18,10 @@ vehicle_controller:
     # How long /mavros/state may go silent before the whole telemetry snapshot
     # reverts to its startup values and fc_state reports UNKNOWN. Must exceed
     # the message period - measured ~1.06 s, worst observed 1.27 s - or it
-    # false-triggers. 3.0 s tolerates two missed heartbeats.
-    fc_state_timeout_s: 3.0
+    # false-triggers.
+    #
+    # 3.0 s was only 2.4 worst-case periods and flapped in practice, reporting
+    # the link down on ordinary jitter. 5.0 s tolerates three missed
+    # heartbeats, which is the difference between a late message and a link
+    # that has actually stopped.
+    fc_state_timeout_s: 5.0

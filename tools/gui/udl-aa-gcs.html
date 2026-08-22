@@ -9,14 +9,15 @@
 <body>
 <div class="app">
 
-  <div class="telem">
-    <span class="telem-line state" id="lineState">mode — · mission —</span>
-    <span class="telem-line" id="linePose">E — N — U — yaw —</span>
-    <span class="telem-line" id="lineVel">vE — vN — vU —</span>
-    <span class="telem-line" id="lineHealth">batt — · disarmed · ground</span>
+  <div class="head">
+    <div class="telem">
+      <span class="telem-line state" id="lineState">mode — · mission —</span>
+      <span class="telem-line" id="linePose">E — N — U — yaw —</span>
+      <span class="telem-line" id="lineVel">vE — vN — vU —</span>
+      <span class="telem-line" id="lineHealth">batt — · disarmed · ground</span>
+    </div>
+    <div class="log" id="log"></div>
   </div>
-
-  <div class="log" id="log"></div>
 
   <div class="controls">
     <!-- LEFT: throttle (vz) + yaw -->

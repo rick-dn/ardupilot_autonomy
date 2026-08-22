@@ -19,8 +19,12 @@ datum.
 
 import rclpy
 
+from udl_aa_fc import gui_link
 from udl_aa_fc.command_link import CommandLink
 from udl_aa_fc.gui_link import GuiLink
+from udl_aa_fc.sequences.abort import AbortSequence
+from udl_aa_fc.sequences.manual import ManualSequence
+from udl_aa_fc.sequences.smart_rtl import SmartRtlSequence
 from udl_aa_fc.sequences.takeoff import TakeoffSequence
 
 NODE_NAME = 'udl_aa_fc'
@@ -41,12 +45,15 @@ ABORT_SEQUENCE = 'abort'
 # attributed to us rather than to another commander. Ids are fixed and never
 # reused; the wire names must match the page's data-sequence attributes.
 SEQUENCES = {
+    # seq_id 0: a manual token is just its command counter, which starts at 1,
+    # so token 0 still never appears on the wire.
+    'manual': (0, ManualSequence),
     'takeoff': (1, TakeoffSequence),
-    # 'smart_rtl':     (2, SmartRtlSequence),
+    'smart_rtl': (2, SmartRtlSequence),
     # 'smart_land':    (3, SmartLandSequence),
     # 'follow':        (4, FollowSequence),
     # 'aruco_landing': (5, ArucoLandingSequence),
-    # ABORT_SEQUENCE:  (9, AbortSequence),
+    ABORT_SEQUENCE: (9, AbortSequence),
 }
 
 
@@ -75,8 +82,10 @@ class VehicleCommander:
         """One pass. Never blocks and never waits on a command."""
         request = self._gui.poll()
         if request is not None:
-            if request.start:
-                self._start(request.name)
+            if request.action == gui_link.START:
+                self._start(request.name, request.params)
+            elif request.action == gui_link.STOP:
+                self._stop('released by operator')
             else:
                 self._stop('aborted by operator')
                 self._start(ABORT_SEQUENCE)
@@ -128,30 +137,44 @@ class VehicleCommander:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def _start(self, name):
+    def _start(self, name, params=None):
+        # One sequence at a time. A start arriving while something runs is
+        # refused, not queued and not honoured - two things steering the same
+        # vehicle is never what the operator meant. Abort is the only override,
+        # and it goes through _stop first so this never sees a live sequence.
+        #
+        # This is a GCS, not the emergency control path. That is RC, which
+        # outranks everything here by taking the vehicle out of GUIDED.
+        if self._active is not None:
+            self._log(f'{name} refused - {self._active_name} is running')
+            return
+
         sequence = self._registry.get(name)
         if sequence is None:
             self._log(f'unknown sequence: {name}')
             return
 
-        # A start while something is running replaces it. The outgoing
-        # sequence still gets its on_exit(), so a velocity stream it opened is
-        # closed before the next one issues anything.
-        self._stop('replaced')
-
         self._active = sequence
         self._active_name = name
-        sequence.on_start()
+        sequence.on_start(params)
         self._log(f'{name} started')
 
     def _stop(self, reason):
-        """The only way a sequence ends. Logs, unwinds, forgets."""
+        """The only way a sequence ends. Logs, unwinds, forgets.
+
+        The forgetting is in a finally because an on_exit() that raises would
+        otherwise leave the commander believing a dead sequence is still
+        running - nothing new could start and the operator's abort would do
+        nothing, until the node was restarted.
+        """
         if self._active is None:
             return
         self._log(f'{self._active_name} {reason}')
-        self._active.on_exit()
-        self._active = None
-        self._active_name = None
+        try:
+            self._active.on_exit()
+        finally:
+            self._active = None
+            self._active_name = None
 
     def _log(self, text):
         """Sequence and commander lines, to the console and the operator."""

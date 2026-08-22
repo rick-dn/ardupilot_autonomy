@@ -65,7 +65,7 @@ class TakeoffSequence(Sequence):
         self._phase = self.PREFLIGHT
         self._deadline = 0.0
 
-    def on_start(self):
+    def on_start(self, params=None):
         self._enter(self.PREFLIGHT, self.telemetry_timeout)
         self.log(f'takeoff: target {self.altitude:.1f} m')
 

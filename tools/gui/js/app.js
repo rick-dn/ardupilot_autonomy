@@ -1,5 +1,4 @@
 const T_CMD    = 'udl_aa_gcs/cmd';
-const T_MANUAL = 'udl_aa_gcs/manual';      // node ignores this for now
 const T_TELEM  = 'udl_aa_gcs/telemetry';
 const T_LOG    = 'udl_aa_gcs/log';
 
@@ -19,43 +18,44 @@ document.querySelectorAll('.seq-btn[data-sequence]').forEach(btn => {
 });
 
 document.getElementById('abortBtn').addEventListener('click', () => {
-  stopStream();
+  stopHold();
   publish(T_CMD, { action: 'abort' });
 });
 
-// ── D-pad: parked on its own topic until the node consumes it ──────
-const V = 1.0, Y = 1.0, RATE_MS = 100;
+// ── D-pad ──────────────────────────────────────────────────────────
+// One message per press, not a stream. SET_VELOCITY starts a setpoint stream
+// on the vehicle that runs until STOP_VELOCITY, so holding costs nothing on
+// the wire. ENU axes and yaw CCW-positive, matching the stack throughout.
+const V = 1.0, Y = 1.0;
 const AXIS = {
-  'vx+': {vx: V, vy: 0, vz: 0, yaw_rate: 0},
-  'vx-': {vx:-V, vy: 0, vz: 0, yaw_rate: 0},
-  'vy+': {vx: 0, vy: V, vz: 0, yaw_rate: 0},
-  'vy-': {vx: 0, vy:-V, vz: 0, yaw_rate: 0},
-  'vz+': {vx: 0, vy: 0, vz: V, yaw_rate: 0},
-  'vz-': {vx: 0, vy: 0, vz:-V, yaw_rate: 0},
-  'yaw+':{vx: 0, vy: 0, vz: 0, yaw_rate: Y},
-  'yaw-':{vx: 0, vy: 0, vz: 0, yaw_rate:-Y},
+  'vx+': {east: V, north: 0, up: 0, yaw_rate: 0},
+  'vx-': {east:-V, north: 0, up: 0, yaw_rate: 0},
+  'vy+': {east: 0, north: V, up: 0, yaw_rate: 0},
+  'vy-': {east: 0, north:-V, up: 0, yaw_rate: 0},
+  'vz+': {east: 0, north: 0, up: V, yaw_rate: 0},
+  'vz-': {east: 0, north: 0, up:-V, yaw_rate: 0},
+  'yaw+':{east: 0, north: 0, up: 0, yaw_rate: Y},
+  'yaw-':{east: 0, north: 0, up: 0, yaw_rate:-Y},
 };
-let streamTimer = null, activeBtn = null;
+let activeBtn = null;
 
-function startStream(cmd, btn){
-  stopStream();
+function startHold(params, btn){
+  stopHold();
   activeBtn = btn; btn.classList.add('held');
-  const send = () => publish(T_MANUAL, { type:'set_velocity', ...cmd });
-  send();
-  streamTimer = setInterval(send, RATE_MS);
+  publish(T_CMD, { action: 'start', name: 'manual', params });
 }
-function stopStream(){
-  if (streamTimer){ clearInterval(streamTimer); streamTimer = null; }
-  if (activeBtn){ activeBtn.classList.remove('held'); activeBtn = null; }
-  publish(T_MANUAL, { type:'stop_velocity' });
+function stopHold(){
+  if (!activeBtn) return;
+  activeBtn.classList.remove('held'); activeBtn = null;
+  publish(T_CMD, { action: 'stop' });
 }
 
 document.querySelectorAll('.dbtn[data-vel]').forEach(btn => {
-  const cmd = AXIS[btn.dataset.vel];
-  btn.addEventListener('pointerdown',  e => { e.preventDefault(); startStream(cmd, btn); });
-  btn.addEventListener('pointerup',    e => { e.preventDefault(); stopStream(); });
-  btn.addEventListener('pointerleave', () => { if (activeBtn === btn) stopStream(); });
-  btn.addEventListener('pointercancel',() => { if (activeBtn === btn) stopStream(); });
+  const params = AXIS[btn.dataset.vel];
+  btn.addEventListener('pointerdown',  e => { e.preventDefault(); startHold(params, btn); });
+  btn.addEventListener('pointerup',    e => { e.preventDefault(); stopHold(); });
+  btn.addEventListener('pointerleave', () => { if (activeBtn === btn) stopHold(); });
+  btn.addEventListener('pointercancel',() => { if (activeBtn === btn) stopHold(); });
 });
 
 // ── Inbound ────────────────────────────────────────────────────────
