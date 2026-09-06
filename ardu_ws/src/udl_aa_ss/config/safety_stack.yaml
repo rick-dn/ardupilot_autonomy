@@ -1,0 +1,25 @@
+udl_aa_ss:
+  ros__parameters:
+    # Rate every condition thread evaluates at. One rate for all of them: the
+    # telemetry feeding them publishes at 5 Hz, so anything faster re-reads the
+    # same snapshot and per-condition rates would only be a knob that cannot
+    # matter.
+    condition_rate_hz: 10.0
+
+    # Battery bands, in volts. Each key is a Level in constants.py -
+    # batt_<level>_v - and the tier table there maps the level to a response:
+    #   LOW       -> WARNING    names itself, runs nothing
+    #   VERY_LOW  -> SAFE_RTL
+    #   CRITICAL  -> SAFE_LAND
+    #
+    # Walked in ascending order, first crossed wins. Retuning is a number here;
+    # adding a band is a line here plus a row in constants.BATTERY_TIERS.
+    #
+    # INVALID is not a battery band. Before the first telemetry message the
+    # whole snapshot reads zero, and 0.0 V means nobody is talking to this
+    # vehicle rather than a flat pack - without it a fresh start would fire
+    # SAFE_LAND on its first tick.
+    batt_invalid_v: 1.0
+    batt_critical_v: 10.0
+    batt_very_low_v: 10.5
+    batt_low_v: 11.1

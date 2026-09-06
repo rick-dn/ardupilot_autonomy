@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>udl_aa_ss</name>
+  <version>0.1.0</version>
+  <description>
+    Safety stack for the ArduPilot autonomy stack. Runs one thread per safety
+    condition, ranks their verdicts, and runs a safety sequence in response,
+    commanding the vehicle over its own topics - which the flight stack
+    prioritises above the flight commander's.
+
+    A peer of udl_aa_fc rather than a layer under it: it depends on the topic
+    contract exposed by udl_aa_fs and never on the flight commander, so the
+    safety stack cannot be broken by a change to the thing it overrides.
+  </description>
+  <maintainer email="hello@usefuldynamics.io">Your Name</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>udl_aa_msgs</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
