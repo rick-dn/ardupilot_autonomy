@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>udl_aa_seqs</name>
+  <version>0.1.0</version>
+  <description>
+    Flight sequences for the ArduPilot autonomy stack. The executive layer:
+    multi-step phase machines composed on top of the stateless command/status
+    interface exposed by the flight stack, determining step completion from
+    telemetry since the vehicle side never reports it.
+
+    Holds the sequences and the link to the flight stack, and nothing that
+    decides which sequence should run - that intent arrives from above. Split
+    out of udl_aa_fc so a sequence exists once rather than once per commander,
+    and so a sequence that blocks cannot stall whatever is arbitrating over it.
+  </description>
+  <maintainer email="hello@usefuldynamics.io">Your Name</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>udl_aa_msgs</depend>
+
+  <!-- The test scripts and the backup sequences reach past the topic contract:
+       aruco_lander and the follow/aruco backups take detections, and the aruco
+       backup also takes pose and odometry directly. -->
+  <depend>vision_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>python3-numpy</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

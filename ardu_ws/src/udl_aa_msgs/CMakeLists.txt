@@ -24,9 +24,13 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/StatusText.msg"
   "msg/VehicleTelemetry.msg"
 
-  # Command chain, fs_adapter <-> flight commander.
+  # Command chain, flight stack <-> sequences. One primitive per message.
   "msg/VehicleCommand.msg"
   "msg/VehicleStatus.msg"
+
+  # Sequence chain, sequences <-> commander. One whole sequence per message.
+  "msg/SequenceRequest.msg"
+  "msg/SequenceStatus.msg"
 
   DEPENDENCIES std_msgs
 )

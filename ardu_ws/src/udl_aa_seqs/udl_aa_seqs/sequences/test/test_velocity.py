@@ -47,8 +47,8 @@ import math
 import rclpy
 from rclpy.node import Node
 
-from udl_aa_fc import vocabulary
-from udl_aa_fc.command_link import CommandLink
+from udl_aa_seqs import vocabulary
+from udl_aa_seqs.command_link import CommandLink
 
 SEQUENCE = 'test_velocity'
 LEG_M = 10.0

@@ -25,8 +25,8 @@ GUIDED - a GCS or the pilot must. Hence the check rather than a command.
 
 import time
 
-from udl_aa_fc import vocabulary
-from udl_aa_fc.sequence import Sequence
+from udl_aa_seqs import vocabulary
+from udl_aa_seqs.sequence import Sequence
 
 GUIDED = 'GUIDED'
 

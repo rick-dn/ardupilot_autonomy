@@ -1,53 +1,26 @@
 #!/bin/bash
 
-# Build (optional) and launch the flight commander, or one test script.
-# Usage: bash launch_fc.sh [--target N] [--build]
+# Build (optional) and launch the flight commander.
+# Usage: bash launch_fc.sh [--build]
 #
-#   (no target)  the flight commander - sequences are started from the GUI
-#   --target 1   test_goto_local   ENU diamond around the origin
-#   --target 2   test_goto_body    RFU cross with a spin at each end
-#   --target 3   test_velocity     ENU diamond flown on timed velocity legs
-#   --target 4   test_goto_global  WGS-84 waypoints from GCS clicks
-#   --target 5   aruco_lander      scan for the marker, settle, servo down
+# The deliberative layer: it evaluates the safety conditions, polls the
+# operator, and publishes a sequence request. It runs no sequences itself, so
+# start udl_aa_seqs as well - and start it first. The commander's `live` gate is
+# a subscriber count on the request topic, so with the runner down it publishes
+# nothing and silently looks idle rather than failing.
 #
-# The test scripts are standalone: each owns its node, runs start to finish,
-# and confirms nothing. They are not sequences and the commander knows nothing
-# about them. Target 5 is the exception to "runs start to finish": it is closed
-# loop on the detector and ends when it hands off to LAND, or on ctrl-C.
-#
-# Flags can come in either order.
+# The standalone test scripts moved with the sequences. They are
+# `bash launch_seqs.sh --target N` now.
 
 set -e
 
 WORKSPACE="/data/projects/ardupilot_autonomy/ardu_ws"
 PACKAGE_NAME="udl_aa_fc"
 
-TARGET=0
-BUILD=0
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --build)  BUILD=1; shift ;;
-        --target) TARGET="$2"; shift 2 ;;
-        *) echo "❌ Unknown option: $1"; exit 1 ;;
-    esac
-done
-
-# Entry points as named in setup.py console_scripts.
-case "$TARGET" in
-    0) EXECUTABLE="" ;;
-    1) EXECUTABLE="test_goto_local" ;;
-    2) EXECUTABLE="test_goto_body" ;;
-    3) EXECUTABLE="test_velocity" ;;
-    4) EXECUTABLE="test_goto_global" ;;
-    5) EXECUTABLE="aruco_lander" ;;
-    *) echo "❌ Unknown target: $TARGET (expected 1-5, or none)"; exit 1 ;;
-esac
-
 echo "📂 Changing to workspace..."
 cd "$WORKSPACE" || { echo "❌ Failed to cd to $WORKSPACE"; exit 1; }
 
-if [[ "$BUILD" == "1" ]]; then
+if [[ "$1" == "--build" ]]; then
     echo "🧹 Cleaning $PACKAGE_NAME artifacts..."
     rm -rf build/"$PACKAGE_NAME" install/"$PACKAGE_NAME"
 
@@ -58,10 +31,5 @@ fi
 echo "📦 Sourcing workspace..."
 source install/setup.bash
 
-if [[ -z "$EXECUTABLE" ]]; then
-    echo "🚀 Launching flight commander..."
-    ros2 launch "$PACKAGE_NAME" udl_aa_fc.launch.py
-else
-    echo "🚀 Running $EXECUTABLE (target $TARGET)..."
-    ros2 run "$PACKAGE_NAME" "$EXECUTABLE"
-fi
+echo "🚀 Launching flight commander..."
+ros2 launch "$PACKAGE_NAME" udl_aa_fc.launch.py

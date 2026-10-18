@@ -1,35 +1,38 @@
-"""Transport to the vehicle: the three topics, their QoS, and nothing that waits.
+"""Transport to the sequence node: three topics, their QoS, and nothing that waits.
 
-This is the only module that publishes a VehicleCommand or touches the status
-and telemetry topics, so the QoS profiles have exactly one place to be wrong.
+The commander decides which sequence should run; udl_aa_seqs runs it. This is
+the only module that touches either side of that hop, so the QoS profiles have
+exactly one place to be wrong.
 
-QoS is not a preference here. Commands are RELIABLE because dropping one loses
-an operator intent, and a BEST_EFFORT publisher would not match the vehicle's
-RELIABLE subscription at all - DDS connects nothing and says nothing, so the
-symptom is a commander that publishes into the void rather than an error.
+Three endpoints, not two. Telemetry is subscribed here as well, because the
+safety conditions are evaluated in the commander's own tick and need the
+vehicle's state to evaluate against. It comes straight from the flight stack
+rather than being relayed through the sequence node - telemetry is a broadcast
+with no addressee, so a second consumer costs nothing and a relay would only add
+a hop that can lag.
+
+QoS is not a preference. Requests are RELIABLE because dropping one loses an
+intent - and worse here than on the command topic, since a request is published
+on change only, so a dropped one is never retried. Status and telemetry are
+latest-value-wins state broadcasts; a BEST_EFFORT publisher does not match a
+RELIABLE subscription at all, and DDS connects nothing and says nothing, so the
+symptom would be silence rather than an error.
 
 Nothing below blocks. Every method is a single read that returns immediately,
-because the caller is a 20 Hz tick: a method that waited would stall the tick
-that polls the operator's abort, and calling spin_once from inside a callback
-the executor is already spinning is invalid regardless of how briefly it waits.
+because the caller is a 20 Hz tick.
 
 Two facts are published rather than checked by callers:
 
-  live      the vehicle stack is up and the FC is reporting. Both limbs are
-            single reads with no bookkeeping - a subscriber count that DDS
-            maintains, and a mode string the adapter blanks when telemetry
-            drops. No sequence ever checks either one; the commander gates on
-            this once per tick and ends whatever is running.
+  live      the sequence node is up and the flight controller is reporting.
+            Both limbs are single reads with no bookkeeping - a subscriber count
+            DDS maintains, and a mode string the flight stack blanks when
+            telemetry drops.
 
-  rejection the one status worth keeping. Status publishes every tick as a
-            heartbeat and echoes a token on exactly the tick that arbitrated
-            it, so a rejection exists for one message and is gone. Latching it
-            in the callback is what makes it impossible to miss; consuming it
-            on read is what makes it impossible to act on twice.
+  status    what is running, straight off the wire. Kept whole rather than
+            unpacked: the commander matches its own token against it, and
+            whether a sequence is still going is the question it needs answered,
+            not what phase it is in.
 """
-
-import dataclasses
-from typing import List
 
 from rclpy.qos import (
     DurabilityPolicy,
@@ -38,18 +41,16 @@ from rclpy.qos import (
     ReliabilityPolicy,
 )
 from udl_aa_msgs.msg import (
-    VehicleCommand,
-    VehicleStatus,
+    SequenceRequest,
+    SequenceStatus,
     VehicleTelemetry,
 )
 
-from udl_aa_fc import vocabulary
-
-TOPIC_COMMAND = '/vehicle/command'
-TOPIC_STATUS = '/vehicle/status'
+TOPIC_REQUEST = '/sequence/request'
+TOPIC_STATUS = '/sequence/status'
 TOPIC_TELEMETRY = '/vehicle/telemetry'
 
-COMMAND_QOS = QoSProfile(
+REQUEST_QOS = QoSProfile(
     reliability=ReliabilityPolicy.RELIABLE,
     durability=DurabilityPolicy.VOLATILE,
     history=HistoryPolicy.KEEP_LAST,
@@ -57,9 +58,8 @@ COMMAND_QOS = QoSProfile(
 )
 
 # Status and telemetry are latest-value-wins state broadcasts. BEST_EFFORT is
-# not a preference: the vehicle publishes both BEST_EFFORT, and a RELIABLE
-# subscriber does not match a BEST_EFFORT publisher - DDS connects nothing and
-# says nothing, so the symptom is silence rather than an error.
+# not a preference: both publishers are BEST_EFFORT, and a RELIABLE subscriber
+# does not match one - DDS connects nothing and says nothing.
 STATE_QOS = QoSProfile(
     reliability=ReliabilityPolicy.BEST_EFFORT,
     durability=DurabilityPolicy.VOLATILE,
@@ -68,31 +68,30 @@ STATE_QOS = QoSProfile(
 )
 
 
-@dataclasses.dataclass
-class Rejection:
-    """A refused submission. `command` is empty unless safety outranked us."""
-
-    token: int
-    cond: List[str]
-    command: str
-
-
 class CommandLink:
 
     def __init__(self, node):
         self._node = node
 
         # Seeded rather than None: ROS has no null, so a default-constructed
-        # message already reads mode == '', which is exactly what a dropped
-        # link reads. Startup-before-first-message and telemetry-lost are the
-        # same state, so nothing downstream needs a None branch.
+        # message already reads sequence == '' and mode == '', which is exactly
+        # what "nothing running" and "no telemetry" read as. Startup and
+        # dropped-link are the same state, so nothing downstream needs a None
+        # branch - which is also what lets every safety condition be written as
+        # a plain function of the snapshot.
+        self._status = SequenceStatus()
         self._telemetry = VehicleTelemetry()
-        self._rejection = None
 
-        self._pub = node.create_publisher(VehicleCommand, TOPIC_COMMAND,
-                                          COMMAND_QOS)
+        # Minted here rather than by the commander: this is the thing that
+        # publishes, so the counter belongs with the wire. Starts at 1 because
+        # the sequence node reports token 0 when nothing is running, which would
+        # otherwise match a real request.
+        self._token = 0
+
+        self._pub = node.create_publisher(SequenceRequest, TOPIC_REQUEST,
+                                          REQUEST_QOS)
         self._status_sub = node.create_subscription(
-            VehicleStatus, TOPIC_STATUS, self._status_callback, STATE_QOS)
+            SequenceStatus, TOPIC_STATUS, self._status_callback, STATE_QOS)
         self._telemetry_sub = node.create_subscription(
             VehicleTelemetry, TOPIC_TELEMETRY, self._telemetry_callback,
             STATE_QOS)
@@ -102,15 +101,7 @@ class CommandLink:
     # ------------------------------------------------------------------
 
     def _status_callback(self, msg):
-        """Keep refusals, discard the heartbeat.
-
-        No token matching here. Whose rejection it is depends on which
-        sequence is running, which this module has no business knowing - the
-        commander compares it against the active sequence's token.
-        """
-        if msg.cmd_status != VehicleStatus.REJECTED:
-            return
-        self._rejection = Rejection(msg.token, list(msg.cond), msg.command)
+        self._status = msg
 
     def _telemetry_callback(self, msg):
         self._telemetry = msg
@@ -119,24 +110,33 @@ class CommandLink:
     # Reads - all immediate
     # ------------------------------------------------------------------
 
+    def status(self):
+        """The latest sequence status, never None.
+
+        Handed out whole so the commander can match `token` and read `sequence`
+        and `state` from the same message - three fields that only mean anything
+        together.
+        """
+        return self._status
+
     def telemetry(self):
         """The latest snapshot, never None.
 
         Handed out whole: every field in it was sampled at the same instant, so
-        a caller can compare fields against each other without reconciling
+        a condition can compare fields against each other without reconciling
         timestamps.
         """
         return self._telemetry
 
     @property
     def live(self):
-        """The vehicle stack is up and the FC is reporting.
+        """The sequence node is up and the flight controller is reporting.
 
-        The subscriber count covers the stack: all three endpoints are created
-        on one node over there, so losing it drops this count whichever topic
-        died. The mode string covers the FC behind it: the adapter blanks it
-        when telemetry stops, and a blank mode fails every sequence's
-        precondition anyway.
+        The subscriber count covers the sequence node - it is the only
+        subscriber to the request topic, so losing it drops this count. The mode
+        string covers the vehicle behind it: the flight stack blanks it when
+        telemetry stops, and a blank mode fails every sequence's precondition
+        anyway.
 
         The count falls on DDS discovery timeout rather than instantly, so a
         hard kill takes a second or two to register here.
@@ -144,41 +144,36 @@ class CommandLink:
         return (self._pub.get_subscription_count() > 0
                 and self._telemetry.state.mode != '')
 
-    def rejection(self):
-        """The refusal since the last call, or None. Consumed on read."""
-        rejection, self._rejection = self._rejection, None
-        return rejection
-
     # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------
 
-    def publish(self, token, command, params=None):
-        """Publish one command under the caller's token.
+    def request(self, sequence, params=None):
+        """Publish one sequence request and return its token.
 
-        The token is minted by the sequence, not here - it carries the
-        sequence id in its high bits, which is what lets a rejection on this
-        shared topic be attributed to one sequence rather than another.
+        The token is returned rather than stored, because matching it is the
+        commander's business: it is what distinguishes "the sequence I asked for
+        is now running" from a stale status.
 
-        `params` must be exactly the set the command expects; vocabulary
-        raises otherwise, so a wrong parameter set fails at the call site with
-        the offending names rather than returning as an anonymous MALFORMED.
+        `params` is passed through without validation. The sequence node holds
+        the registry and is the only thing that can say whether a name exists or
+        a parameter set fits it, so checking here would be guessing - and an
+        unknown name is deliberately allowed onto the wire so a typo surfaces as
+        a rejection rather than as silence.
         """
         params = params or {}
-        vocabulary.validate(command, params)
 
-        msg = VehicleCommand()
+        self._token += 1
+        msg = SequenceRequest()
         msg.header.stamp = self._node.get_clock().now().to_msg()
-        # Identity only, never addressing. It reaches the vehicle's log line
-        # when a message is desk-rejected, and nowhere else.
-        msg.sequence = self._node.get_name()
-        msg.token = token
-        msg.command = command
-        # Zipped back into a dict on the vehicle; order is irrelevant, pairing
-        # by index is not.
+        msg.sequence = sequence
+        msg.token = self._token
+        # Zipped back into a dict by the sequence node; order is irrelevant,
+        # pairing by index is not.
         msg.param_names = list(params.keys())
         msg.param_values = [float(params[name]) for name in msg.param_names]
 
         self._pub.publish(msg)
         self._node.get_logger().info(
-            f'sent token={token} {command} {params or ""}'.rstrip())
+            f'request token={self._token} {sequence} {params or ""}'.rstrip())
+        return self._token

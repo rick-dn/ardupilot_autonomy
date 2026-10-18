@@ -19,8 +19,8 @@ at 1 - token 0 never appears.
 
 import time
 
-from udl_aa_fc import vocabulary
-from udl_aa_fc.sequence import Sequence
+from udl_aa_seqs import vocabulary
+from udl_aa_seqs.sequence import Sequence
 
 GUIDED = 'GUIDED'
 
@@ -43,7 +43,23 @@ class ManualSequence(Sequence):
         self._next_send = 0.0
 
     def update(self):
-        """Refresh the setpoint for as long as the button is held."""
+        """Refresh the setpoint for as long as the button is held.
+
+        An all-zero axis set is a release, not a setpoint. It is sent once and
+        then the sequence completes: the commander requests zeros when the
+        operator lets go, and holding the sequence open afterwards would refresh
+        zeros at 1 Hz forever and - because a running sequence is denied to
+        everything of equal or lower priority - refuse the operator's next one.
+        A takeoff after releasing the d-pad would be turned down.
+
+        Checked after the first send rather than before it, so the zeros
+        actually go out; _issued is what distinguishes "sent them" from "about
+        to".
+        """
+        if self._issued and not any(self._params.values()):
+            self.log('manual: released')
+            return self.COMPLETE
+
         if time.monotonic() < self._next_send:
             return self.RUNNING
 

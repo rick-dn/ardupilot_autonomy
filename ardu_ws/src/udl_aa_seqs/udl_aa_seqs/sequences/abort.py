@@ -15,8 +15,8 @@ this immediately rather than trying to command anything. Someone else has the
 vehicle and every command would be refused anyway.
 """
 
-from udl_aa_fc import vocabulary
-from udl_aa_fc.sequence import Sequence
+from udl_aa_seqs import vocabulary
+from udl_aa_seqs.sequence import Sequence
 
 GUIDED = 'GUIDED'
 

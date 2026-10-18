@@ -87,8 +87,8 @@ from rclpy.qos import (
 from vision_msgs.msg import Detection2DArray
 from udl_aa_msgs.msg import VehicleStatus
 
-from udl_aa_fc import vocabulary
-from udl_aa_fc.command_link import STATE_QOS, TOPIC_STATUS, CommandLink
+from udl_aa_seqs import vocabulary
+from udl_aa_seqs.command_link import STATE_QOS, TOPIC_STATUS, CommandLink
 
 SEQUENCE = 'aruco_lander'
 

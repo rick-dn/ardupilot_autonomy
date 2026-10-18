@@ -28,8 +28,8 @@ position target the vehicle is already at is exactly that.
 
 import time
 
-from udl_aa_fc import vocabulary
-from udl_aa_fc.sequence import Sequence
+from udl_aa_seqs import vocabulary
+from udl_aa_seqs.sequence import Sequence
 
 GUIDED = 'GUIDED'
 
