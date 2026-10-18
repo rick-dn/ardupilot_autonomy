@@ -1,0 +1,16 @@
+vehicle_node:
+  ros__parameters:
+    # Telemetry is republished on its own timer rather than as fast as it
+    # arrives: the quickest MAVROS group feeding get_telemetry() measures
+    # ~3 Hz, so going faster emits byte-identical messages.
+    telemetry_rate_hz: 5.0
+    logger_rate_hz: 1.0
+
+    # How long /mavros/state may go silent before the whole telemetry snapshot
+    # reverts to its startup values. Declared by MavrosAdapter, not by the node.
+    # Must exceed the message period - measured ~1.06 s, worst observed 1.27 s.
+    # 3.0 s flapped in practice; 5.0 s tolerates three missed heartbeats.
+    fc_state_timeout_s: 5.0
+
+# rc_monitor takes no parameters - thresholds and channel indices are
+# hardcoded, carried over unchanged from the flight-tested version on the Pi.

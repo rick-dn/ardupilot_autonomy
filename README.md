@@ -9,7 +9,10 @@ sees. Sequencing, retries, and mission logic live above the topic contract.
 
 ## Architecture
 
-Three layers, one node each.
+A **hybrid deliberative/reactive** stack in the **three-tiered (3T)** form —
+deliberation, sequencing, reactive skills — one node per tier. See
+[`docs/architecture.md`](docs/architecture.md) for the philosophy and the
+diagrams.
 
 ```
 browser GUI ──MQTT ws:9001──┐
@@ -206,6 +209,8 @@ bash scripts/launch_seqs.sh --target 5   # aruco_lander      scan, settle, servo
 
 ## Documentation
 
+- [`docs/architecture.md`](docs/architecture.md) — the pattern, the philosophy
+  behind it, diagrams to refer to, and what is still needed for production
 - [`docs/commander.md`](docs/commander.md) — the commander's tick, the
   arbitration rule, the sequence request/status contract, and what is still open
 - [`docs/safety_stack.md`](docs/safety_stack.md) — the condition model, and
