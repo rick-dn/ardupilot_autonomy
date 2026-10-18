@@ -5,35 +5,55 @@ ArduPilot, over MAVROS. By [Useful Dynamics](https://usefuldynamics.io).
 
 This is a development and test bench, not a finished product. The flight stack is
 deliberately stateless: it executes one command at a time and reports what it
-sees. Sequencing, retries, and mission logic live in the flight commander, above
-the topic contract.
+sees. Sequencing, retries, and mission logic live above the topic contract.
 
 ## Architecture
 
+Three layers, one node each.
+
 ```
 browser GUI ──MQTT ws:9001──┐
-                            ├── broker :1883 ── udl_aa_fc ──/vehicle/command──┐
-            udl_aa_gcs/*  ──┘      (gui_link)   (commander)                   │
-                                                                        udl_aa_fs
-                                        ◄──/vehicle/telemetry, /vehicle/status─┤
-                                                                              │
-                                                                  MAVROS ── ArduPilot
+                            ├── broker :1883 ── udl_aa_fc
+            udl_aa_gcs/*  ──┘      (gui_link)   deliberative - decides WHAT
+                                                     │
+                                     /sequence/request, /sequence/status
+                                                     │
+                                                udl_aa_seqs
+                                                executive - RUNS one at a time
+                                                     │
+                                      /vehicle/command, /vehicle/status
+                                                     │
+                                                 udl_aa_fs
+                                                 reactive - EXECUTES
+                                                     │
+                                             MAVROS ── ArduPilot
 ```
+
+The commander decides which sequence should be running and runs none of them.
+The sequence node runs exactly one at a time and is the only thing that issues
+commands. The flight stack executes commands and knows nothing about sequences.
 
 | Package | Role |
 |---|---|
-| `ardu_ws/src/udl_aa_fs` | Flight stack. `vehicle_controller` node — owns the MAVROS connection, FSM arbitration, and safety monitoring. |
 | `ardu_ws/src/udl_aa_msgs` | Interface definitions. Build first; dependents link against the generated code. |
-| `ardu_ws/src/udl_aa_fc` | Flight commander. `udl_aa_fc` node, plus four standalone test scripts. |
+| `ardu_ws/src/udl_aa_fc` | Flight commander. Evaluates the safety conditions, polls the operator, arbitrates, and publishes one sequence request. |
+| `ardu_ws/src/udl_aa_seqs` | Sequences. Every phase machine, one running at a time, plus five standalone test scripts. |
+| `ardu_ws/src/udl_aa_fs` | Flight stack. `vehicle_controller` node — owns the MAVROS connection and the four-axis arbitration. |
 | `tools/gui` | Browser ground station (`udl-aa-gcs.html`), MQTT over websocket. |
 
 ### Topic contract
 
 | Topic | Type | Direction |
 |---|---|---|
-| `/vehicle/command` | `VehicleCommand` | commander → stack |
-| `/vehicle/status` | `VehicleStatus` | stack → commander |
-| `/vehicle/telemetry` | `VehicleTelemetry` | stack → commander |
+| `/sequence/request` | `SequenceRequest` | commander → sequences |
+| `/sequence/status` | `SequenceStatus` | sequences → commander |
+| `/vehicle/command` | `VehicleCommand` | sequences → stack |
+| `/vehicle/status` | `VehicleStatus` | stack → sequences |
+| `/vehicle/telemetry` | `VehicleTelemetry` | stack → both |
+
+Telemetry is a broadcast with no addressee. The sequence node needs it to decide
+when a phase is done and the commander needs it to evaluate the safety
+conditions, so both subscribe directly rather than one relaying to the other.
 
 The GUI leg is separate, carried over MQTT rather than ROS: `udl_aa_gcs/cmd`,
 `udl_aa_gcs/telemetry`, `udl_aa_gcs/log`.
@@ -49,7 +69,7 @@ chain — an axis is only reached once every axis above it has passed.
 | # | Axis | Gate |
 |---|---|---|
 | 1 | `fc_state` | The stack commands only in GUIDED. Any other mode stops the chain outright — safety included. |
-| 2 | `safety` | Throttle status, geofence, RC loss, battery. An active condition issues its own command and stops the chain, bypassing axes 3 and 4. |
+| 2 | `safety` | **Vestigial.** Safety moved up to the commander; these conditions are inactive stubs in the flight stack and never fire. See [`docs/commander.md`](docs/commander.md). |
 | 3 | `command state` | An `(armed, in_air)` permission table. `ARM` when disarmed; `TAKEOFF`/`DISARM` when armed on ground; goto/velocity/accel/land/RTL only in air. |
 | 4 | `sanity` | The submitted arguments against configured limits — altitude bounds, body-step distance, velocity and acceleration magnitude, finite-value checks. |
 
@@ -63,31 +83,43 @@ command to dispatch, and the caller's token passed back for matching. Outcome
 and command are independent: a `REJECTED` carrying a command means safety
 outranked the submission.
 
-When several safety conditions fire at once, severity decides
-(`LAND` > `RTL` > `WAYPOINT_CMD` > `WARNING`), with condition priority as
-tiebreak. A `WARNING`-tier entry names itself without winning — it is
-information, not an override. Every active condition is reported, not just the
-winner, since that list is what the operator sees.
+## Safety
 
-### Safety awareness
+Safety lives in the commander, not the flight stack. A condition grades the
+vehicle's state into a band, the band names a message, and the message carries
+both the operator-facing wording and the sequence it implies — so what the
+operator reads and what the vehicle does are defined on one row and cannot drift
+apart.
 
-The safety monitor runs its own thread, decoupled from the controller's tick
-rate, and evaluates all conditions in a single pass. It exposes one snapshot
-object via a non-blocking atomic read, so the tick always arbitrates over an
-internally consistent set rather than picking up half its values from one
-evaluation cycle and half from the next.
+| Condition | Bands | Asks for |
+|---|---|---|
+| `battery` | `LOW` / `VERY_LOW` / `CRITICAL` | warning / `smart_rtl` / `land` |
+| `geofence` | `NEAR` / `BREACHED` | warning / `rtl` — **stub** |
+| `rc_loss` | `LOST` | `rtl` — **stub** |
+| `rc_throttle` | `LOW` / `MEDIUM` / `HIGH` | warning only — **stub** |
 
-**Current status:** the framework, arbitration, and severity ranking are in
-place and exercised end to end. `fc_state` is fully wired — mode, armed, and
-in-air all derive from live telemetry. The individual safety sequences
-(geofence, battery, RC loss, throttle status) are **still being developed** and
-currently sit as inactive stubs that never trigger.
+One table ranks every candidate, the operator's own requests included, so
+"safety outranks the operator" falls out of the ordering rather than needing a
+separate check. `abort` sits above everything: the operator can always stop the
+vehicle, including a running safety sequence.
+
+Thresholds are ROS parameters in [`udl_aa_fc/config/safety.yaml`](ardu_ws/src/udl_aa_fc/config/safety.yaml),
+declared generically so the commander names none of them — a commander that
+knows what a volt is has the wrong job.
+
+**Current status:** `battery` is live end to end. `geofence`, `rc_loss` and
+`rc_throttle` are stubs that never fire. `emergency_land` and `motor_cutoff`
+exist in the severity ladder but have no sequence yet.
+
+The last-resort failsafe is ArduPilot's own, configured rather than coded — see
+[`docs/safety_stack.md`](docs/safety_stack.md) for the parameters and the two
+ways it silently fails to arm.
 
 ## Sequences in development
 
 Both are flight-proven in their earlier standalone form and are being ported
-onto the `/vehicle` topic contract. They live in `udl_aa_fc/sequences/backup/`
-and are **not yet plumbed into the commander** — they will be included shortly.
+onto the `/vehicle` topic contract. They live in `udl_aa_seqs/sequences/backup/`
+and are **not yet plumbed into the runner** — they will be included shortly.
 
 ### Follow person — *flight tested*
 
@@ -129,14 +161,19 @@ Message definitions first — a stale generated interface is the usual cause of 
 import that fails only at runtime.
 
 ```bash
-bash scripts/build_msgs.sh          # udl_aa_msgs, always from clean
-bash scripts/launch_fs.sh --build   # builds, then launches the flight stack
-bash scripts/launch_fc.sh --build   # builds, then launches the commander
+bash scripts/build_msgs.sh            # udl_aa_msgs, always from clean
+bash scripts/launch_fs.sh --build     # builds, then launches the flight stack
+bash scripts/launch_seqs.sh --build   # builds, then launches the sequence runner
+bash scripts/launch_fc.sh --build     # builds, then launches the commander
 ```
 
-Rebuild both dependents in a freshly sourced shell after any `.msg` change.
+Rebuild every dependent in a freshly sourced shell after any `.msg` change.
 
 ## Running
+
+Bottom up. Each layer's liveness gate is a subscriber count on the topic it
+publishes to, so starting from the top means a node that publishes into nothing
+and silently looks idle rather than failing.
 
 ```bash
 # 1. MAVROS against SITL
@@ -145,26 +182,34 @@ ros2 run mavros mavros_node --ros-args -p fcu_url:=udp://:14550@localhost:14555
 # 2. Flight stack
 bash scripts/launch_fs.sh
 
-# 3. Flight commander
+# 3. Sequence runner
+bash scripts/launch_seqs.sh
+
+# 4. Flight commander
 bash scripts/launch_fc.sh
 
-# 4. Open tools/gui/udl-aa-gcs.html in a browser
+# 5. Open tools/gui/udl-aa-gcs.html in a browser
 ```
 
 ### Test scripts
 
 Standalone: each owns its node, runs start to finish, and confirms nothing. They
-bypass the commander entirely.
+bypass the runner and the commander entirely.
 
 ```bash
-bash scripts/launch_fc.sh --target 1   # test_goto_local   ENU diamond around origin
-bash scripts/launch_fc.sh --target 2   # test_goto_body    RFU cross, spin at each end
-bash scripts/launch_fc.sh --target 3   # test_velocity     ENU diamond on timed legs
-bash scripts/launch_fc.sh --target 4   # test_goto_global  WGS-84 waypoints from GCS clicks
+bash scripts/launch_seqs.sh --target 1   # test_goto_local   ENU diamond around origin
+bash scripts/launch_seqs.sh --target 2   # test_goto_body    RFU cross, spin at each end
+bash scripts/launch_seqs.sh --target 3   # test_velocity     ENU diamond on timed legs
+bash scripts/launch_seqs.sh --target 4   # test_goto_global  WGS-84 waypoints from GCS clicks
+bash scripts/launch_seqs.sh --target 5   # aruco_lander      scan, settle, servo down
 ```
 
 ## Documentation
 
+- [`docs/commander.md`](docs/commander.md) — the commander's tick, the
+  arbitration rule, the sequence request/status contract, and what is still open
+- [`docs/safety_stack.md`](docs/safety_stack.md) — the condition model, and
+  ArduPilot's own failsafe parameters with the two ways they silently fail to arm
 - [`docs/flight_stack_interface.md`](docs/flight_stack_interface.md) — the full
   topic interface, and how to build multi-step sequences on a stateless stack
 - [`docs/sitl_reference.md`](docs/sitl_reference.md) — SITL parameters and

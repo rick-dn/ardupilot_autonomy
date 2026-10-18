@@ -3,10 +3,16 @@
 `udl_aa_ss` — a second commander that outranks the flight commander. This is the
 design and the implementation order; it is not yet built.
 
-> **Status.** `constants.py` and `safety_monitor.py` exist, with `battery` live
-> and `geofence` / `rc_loss` / `rc_throttle` stubbed. Everything below the
-> monitor — commander, sequences, link, and the flight-stack changes — is
-> designed here and not yet written.
+> **Superseded — see [commander.md](commander.md).** This document describes the
+> safety stack as a separate peer commander with its own `/safety/*` topics.
+> That design was replaced: safety and operator intent merged into a single
+> `udl_aa_fc` commander, sequences moved to `udl_aa_seqs`, and the fs-side
+> arbitration, the `/safety` topics and the latch all became unnecessary as a
+> result.
+>
+> What survives from here and is still current: the condition model
+> (§3 messages and severity), the `SafetyMessage` pairing, and §8 on the
+> ArduPilot failsafe parameters. Sections 4–7 and 9 are historical.
 
 ---
 

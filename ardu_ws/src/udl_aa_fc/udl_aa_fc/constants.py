@@ -38,12 +38,21 @@ class Sequence:
     A condition never names a sequence directly; it picks a Message, and the
     Message carries the sequence. That way the operator-facing wording and the
     action it implies are defined together and cannot drift apart.
+
+    Both sources draw from one namespace. The operator and a condition can ask
+    for the same sequence - smart_rtl is the obvious one - and the sequence node
+    runs the same code either way; only the priority of the request differs.
     """
+    # requested by a condition
     SMART_RTL = 'smart_rtl'
     RTL = 'rtl'
     LAND = 'land'
     EMERGENCY_LAND = 'emergency_land'
     MOTOR_CUTOFF = 'motor_cutoff'
+    # requested by the operator
+    TAKEOFF = 'takeoff'
+    MANUAL = 'manual'
+    ABORT = 'abort'
 
 
 class Level:
@@ -137,30 +146,10 @@ class Verdict:
 CLEAR = Verdict()
 
 
-# Which sequence wins when several conditions fire at once. Ranked over the
-# sequence rather than the condition, so a battery asking to land outranks a
-# fence asking to return regardless of which raised it.
-#
-# None is the warning tier and ranks lowest, which is what makes WARNING need no
-# special case anywhere: a real sequence always outranks it, and if only
-# warnings are active the winner's sequence is None and nothing runs.
-SEVERITY = {
-    None: 1,
-    Sequence.SMART_RTL: 2,
-    Sequence.RTL: 3,
-    Sequence.LAND: 4,
-    Sequence.EMERGENCY_LAND: 5,
-    Sequence.MOTOR_CUTOFF: 6,
-}
-
-# Tiebreak between equal-severity sequences, and the order of the cond list -
-# so what the operator sees does not depend on dict insertion order.
-PRIORITY = {
-    Condition.RC_THROTTLE: 1,
-    Condition.GEOFENCE: 2,
-    Condition.RC_LOSS: 3,
-    Condition.BATTERY: 4,
-}
+# Ranking lives in arbitrate.py, not here. It is one table over every candidate,
+# the operator's requests included, because ranking safety first and then
+# ranking the winner against the operator is two stages that can disagree about
+# what should happen.
 
 
 # ----------------------------------------------------------------------

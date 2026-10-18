@@ -1,121 +1,183 @@
-"""Runs one sequence at a time and decides when it stops.
+"""Decides which sequence should be running, and asks for it.
 
-The commander owns the lifecycle; sequences own their phases. It starts what
-the operator asks for, ends what the vehicle refuses, and logs one line at
-every ending. It never inspects a sequence's internals - a sequence reports
-only RUNNING, COMPLETE or ABORT, and everything else the operator sees comes
-from the log lines the sequence emits as it runs.
+Both the nominal and the safety commander; there is no separate safety node. It
+runs no sequences - udl_aa_seqs does that. The whole decision each tick is
+whether to put a request on the wire.
 
-Rejection is the one signal that arrives from outside the tick. fs_link latches
-it in the status callback and hands it over here, because the vehicle echoes a
-token on exactly the one tick that arbitrated it - sampling the status topic
-from this tick would miss it and the sequence would run on believing a command
-was flying.
+Safety conditions are evaluated here, inline, in the tick. They are pure table
+walks over a cached telemetry snapshot, so four of them cost microseconds and
+the verdicts are fresh rather than read from somewhere. Each one keeps a scratch
+dict across ticks, which is what lets a condition hold history - rc_loss needs
+the last channel values - without this module knowing how any of them work. The
+signature is deliberately the same one a thread would call, so a condition that
+later gets expensive (polygonal geofencing) can be moved onto its own thread
+without anything else changing.
 
-Telemetry to the operator runs on its own timer, not this tick. The source is
-5 Hz; publishing at tick rate would emit four byte-identical messages per new
-datum.
+One ranking over every candidate, from conditions and from the operator alike.
+Ranking safety first and then ranking the winner against the operator is two
+stages that can disagree about what should happen; one table cannot. See
+arbitrate.py.
+
+Publishing on change only is what keeps a standing condition from becoming a
+20 Hz request storm, and it also means a sequence that ended is not immediately
+asked for again: the candidate has not changed, so nothing is published, and a
+battery that is still critical after landing does not land twice.
 """
 
 import rclpy
 
-from udl_aa_fc import gui_link
+from udl_aa_fc import arbitrate, gui_link
 from udl_aa_fc.command_link import CommandLink
+from udl_aa_fc.conditions import battery, geofence, rc_loss, rc_throttle
+from udl_aa_fc.constants import Condition, Message, Sequence
 from udl_aa_fc.gui_link import GuiLink
-from udl_aa_fc.sequences.abort import AbortSequence
-from udl_aa_fc.sequences.manual import ManualSequence
-from udl_aa_fc.sequences.smart_rtl import SmartRtlSequence
-from udl_aa_fc.sequences.takeoff import TakeoffSequence
 
 NODE_NAME = 'udl_aa_fc'
 
-# The tick matches the vehicle's own rate: it arbitrates one submission per
-# 20 Hz tick, so there is nothing to gain by deciding faster than it acts.
+# The tick matches the vehicle's own rate: the flight stack arbitrates one
+# submission per 20 Hz tick, so there is nothing to gain by deciding faster than
+# it can act.
 TICK_RATE_HZ = 20.0
 
 # Telemetry to the operator runs slower and on its own timer. The source is
-# 5 Hz; publishing at tick rate would emit four byte-identical messages per
-# new datum.
+# 5 Hz; publishing at tick rate would emit four byte-identical messages per new
+# datum.
 TELEMETRY_RATE_HZ = 5.0
 
-ABORT_SEQUENCE = 'abort'
-
-# name -> (seq_id, class). seq_id lands in the high bits of every token the
-# sequence sends, which is what lets a rejection on the shared status topic be
-# attributed to us rather than to another commander. Ids are fixed and never
-# reused; the wire names must match the page's data-sequence attributes.
-SEQUENCES = {
-    # seq_id 0: a manual token is just its command counter, which starts at 1,
-    # so token 0 still never appears on the wire.
-    'manual': (0, ManualSequence),
-    'takeoff': (1, TakeoffSequence),
-    'smart_rtl': (2, SmartRtlSequence),
-    # 'smart_land':    (3, SmartLandSequence),
-    # 'follow':        (4, FollowSequence),
-    # 'aruco_landing': (5, ArucoLandingSequence),
-    ABORT_SEQUENCE: (9, AbortSequence),
+# One row per condition. Adding a condition is a module in conditions/, a row
+# here, and a row in arbitrate.PRIORITY - nothing else in the stack changes.
+CONDITIONS = {
+    Condition.BATTERY: battery.evaluate,
+    Condition.GEOFENCE: geofence.evaluate,
+    Condition.RC_LOSS: rc_loss.evaluate,
+    Condition.RC_THROTTLE: rc_throttle.evaluate,
 }
+
+# A released d-pad is a manual request with every axis at zero - the same
+# mechanism as a press, not a special case. The sequence sends it once and
+# completes, so releasing both stops the vehicle and frees the sequence slot.
+STOP_AXES = {'east': 0.0, 'north': 0.0, 'up': 0.0, 'yaw_rate': 0.0}
 
 
 class VehicleCommander:
 
-    def __init__(self, node, fs, gui):
+    def __init__(self, node, fs, gui, limits):
         self._node = node
         self._fs = fs
         self._gui = gui
+        self._limits = limits
 
-        # Built once and reused. on_start() is what resets a sequence for its
-        # next run, so a second takeoff is the same object, not a new one.
-        self._registry = {
-            name: cls(seq_id, fs, self._log)
-            for name, (seq_id, cls) in SEQUENCES.items()
-        }
+        # One scratch dict per condition, persisting across ticks. Only rc_loss
+        # uses it today; it is in the contract so a condition can keep history
+        # without the caller knowing which do.
+        self._scratch = {name: {} for name in CONDITIONS}
 
-        self._active = None
-        self._active_name = None
+        # What was last put on the wire, for change detection. None means
+        # nothing has been requested, which is not the same as nothing running.
+        self._requested = None
+        self._reported = ()
 
     # ------------------------------------------------------------------
     # Tick
     # ------------------------------------------------------------------
 
     def tick(self):
-        """One pass. Never blocks and never waits on a command."""
-        request = self._gui.poll()
-        if request is not None:
-            if request.action == gui_link.START:
-                self._start(request.name, request.params)
-            elif request.action == gui_link.STOP:
-                self._stop('released by operator')
-            else:
-                self._stop('aborted by operator')
-                self._start(ABORT_SEQUENCE)
+        """One pass. Never blocks and never waits on anything."""
+        telemetry = self._fs.telemetry()
 
-        # Checked here rather than in any sequence. Both limbs are reads on
-        # the link, so this costs nothing and every sequence gets it for free.
+        candidates = self._conditions(telemetry) + self._operator()
+        self._report(candidates)
+
+        # Checked after the conditions so a warning is still logged when the
+        # link is down, and before anything is published because a request into
+        # a dead link is a request that is never answered.
         if not self._fs.live:
-            self._stop('vehicle link down')
             return
 
-        # Ordered before update() on purpose: a rejected command was never
-        # dispatched, so letting the sequence tick once more would have it
-        # waiting on telemetry that is never going to move.
-        rejection = self._fs.rejection()
-        if rejection is not None and self._active is not None:
-            if rejection.token == self._active.token:
-                self._stop('rejected - ' + ', '.join(rejection.cond))
+        winner = arbitrate.arbitrate(
+            (sequence, message) for sequence, _, message in candidates)
+        if winner is None:
+            self._requested = None
+            return
 
-        if self._active is not None:
-            status = self._active.update()
-            if status == self._active.COMPLETE:
-                self._stop('complete')
-            elif status == self._active.ABORT:
-                self._stop('failed')
+        params = next(p for s, p, _ in candidates if s == winner)
+        if self._allowed(winner) and self._changed(winner, params):
+            self._fs.request(winner, params)
+            self._requested = (winner, tuple(sorted(params.items())))
+
+    def _conditions(self, telemetry):
+        """Every condition, evaluated inline. Returns candidate tuples."""
+        return [
+            (verdict.message.sequence, {}, verdict.message)
+            for verdict in (
+                evaluate(telemetry, self._limits, self._scratch[name])
+                for name, evaluate in CONDITIONS.items())
+            if verdict.message is not Message.NONE
+        ]
+
+    def _operator(self):
+        """The operator's request, if any, as a candidate tuple.
+
+        STOP is a manual request with zero axes rather than an action of its
+        own - see STOP_AXES. ABORT names the abort sequence, which arbitrate
+        ranks above everything including safety.
+        """
+        request = self._gui.poll()
+        if request is None:
+            return []
+        if request.action == gui_link.START:
+            return [(request.name, request.params or {}, None)]
+        if request.action == gui_link.STOP:
+            return [(Sequence.MANUAL, dict(STOP_AXES), None)]
+        return [(Sequence.ABORT, {}, None)]
+
+    # ------------------------------------------------------------------
+    # The two gates
+    # ------------------------------------------------------------------
+
+    def _allowed(self, winner):
+        """Is this allowed to displace what is already running?
+
+        A running sequence is denied to everything except an abort, the same
+        sequence again, or a strictly more severe one. Equal priority never
+        displaces, which is what stops a condition flickering across its
+        threshold from restarting anything, and stops a clearing condition from
+        abandoning the response to it.
+
+        The same sequence is always allowed, because that is not displacement -
+        it is an update to what is already running, and it is how a d-pad press
+        changes axis and how a release sends its zeros. Denying it on equal
+        priority would leave manual holding its last setpoint until
+        GUID_TIMEOUT. Repeats cost nothing anyway: _changed drops the ones that
+        carry no new information.
+        """
+        status = self._fs.status()
+        if status.state != status.RUNNING:
+            return True
+        if winner == Sequence.ABORT or winner == status.sequence:
+            return True
+        return (arbitrate.PRIORITY.get(winner, arbitrate.UNKNOWN)
+                > arbitrate.PRIORITY.get(status.sequence, arbitrate.UNKNOWN))
+
+    def _changed(self, winner, params):
+        """Has the request changed since the last one published?
+
+        A standing condition asks every tick; republishing at tick rate would
+        make the sequence node responsible for deduplicating. Manual is the one
+        sequence whose repeats are real rather than redundant, and it falls out
+        of this for free: its axes are part of the request, so a different
+        press is a different request and a held one is not.
+        """
+        return self._requested != (winner, tuple(sorted(params.items())))
+
+    # ------------------------------------------------------------------
+    # Outbound
+    # ------------------------------------------------------------------
 
     def publish_telemetry(self):
         """Operator-facing snapshot. Own timer, matched to the source rate."""
         telemetry = self._fs.telemetry()
-        if telemetry is None:
-            return
+        status = self._fs.status()
 
         self._gui.publish_telemetry({
             'east': telemetry.local_position.east,
@@ -130,71 +192,48 @@ class VehicleCommander:
             'armed': telemetry.state.armed,
             'in_air': telemetry.state.in_air,
             'mode': telemetry.state.mode,
-            'mission': self._active_name,
+            'mission': status.sequence or None,
         })
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+    def _report(self, candidates):
+        """Log every active condition, on change rather than per tick.
 
-    def _start(self, name, params=None):
-        # One sequence at a time. A start arriving while something runs is
-        # refused, not queued and not honoured - two things steering the same
-        # vehicle is never what the operator meant. Abort is the only override,
-        # and it goes through _stop first so this never sees a live sequence.
-        #
-        # This is a GCS, not the emergency control path. That is RC, which
-        # outranks everything here by taking the vehicle out of GUIDED.
-        if self._active is not None:
-            self._log(f'{name} refused - {self._active_name} is running')
-            return
-
-        sequence = self._registry.get(name)
-        if sequence is None:
-            self._log(f'unknown sequence: {name}')
-            return
-
-        self._active = sequence
-        self._active_name = name
-        sequence.on_start(params)
-        self._log(f'{name} started')
-
-    def _stop(self, reason):
-        """The only way a sequence ends. Logs, unwinds, forgets.
-
-        The forgetting is in a finally because an on_exit() that raises would
-        otherwise leave the commander believing a dead sequence is still
-        running - nothing new could start and the operator's abort would do
-        nothing, until the node was restarted.
+        All of them, not just the winner: the rest are how the operator sees
+        what else is wrong while one thing is being acted on.
         """
-        if self._active is None:
+        current = tuple(message.text for _, _, message in candidates
+                        if message is not None)
+        if current == self._reported:
             return
-        self._log(f'{self._active_name} {reason}')
-        try:
-            self._active.on_exit()
-        finally:
-            self._active = None
-            self._active_name = None
+        self._reported = current
+        self._log('; '.join(current) if current else 'all clear')
 
     def _log(self, text):
-        """Sequence and commander lines, to the console and the operator."""
+        """Console and operator at once."""
         self._node.get_logger().info(text)
         self._gui.publish_log(text)
 
 
 def main(args=None):
-    """The flight commander is the node. Two timers and a spin.
+    """The commander is the node. Two timers and a spin.
 
     Single-threaded executor, deliberately: the tick and the subscription
-    callbacks never overlap, so the rejection latch and the telemetry cache
-    need no locking. The GUI link is the one thing on another thread, and it
-    is a mailbox behind a lock for exactly that reason.
+    callbacks never overlap, so the status and telemetry caches need no locking.
+    The GUI link is the one thing on another thread, and it is a mailbox behind
+    a lock for exactly that reason.
+
+    Parameters are declared from the config file rather than named here. The
+    conditions own their thresholds; a commander that knows what a volt is has
+    the wrong job.
     """
     rclpy.init(args=args)
-    node = rclpy.create_node(NODE_NAME)
+    node = rclpy.create_node(
+        NODE_NAME, automatically_declare_parameters_from_overrides=True)
+    limits = {name: parameter.value
+              for name, parameter in node.get_parameters_by_prefix('').items()}
 
     gui = GuiLink()
-    commander = VehicleCommander(node, CommandLink(node), gui)
+    commander = VehicleCommander(node, CommandLink(node), gui, limits)
 
     node.create_timer(1.0 / TICK_RATE_HZ, commander.tick)
     node.create_timer(1.0 / TELEMETRY_RATE_HZ, commander.publish_telemetry)

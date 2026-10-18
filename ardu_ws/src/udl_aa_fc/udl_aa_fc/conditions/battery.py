@@ -13,8 +13,8 @@ between it and whatever the other conditions asked for.
 
 from typing import Dict
 
-from udl_aa_ss import constants
-from udl_aa_ss.constants import CLEAR, Verdict
+from udl_aa_fc import constants
+from udl_aa_fc.constants import CLEAR, Verdict
 
 
 def evaluate(telemetry, limits: Dict[str, float], state: Dict) -> Verdict:

@@ -1,0 +1,26 @@
+udl_aa_fc:
+  ros__parameters:
+    # Thresholds for the safety conditions, declared generically by the
+    # commander rather than named in its code - a commander that knows what a
+    # volt is has the wrong job. Each key belongs to the condition that reads
+    # it, via that condition's key function in constants.py.
+    #
+    # Battery bands, in volts. Each key is a Level - batt_<level>_v - and
+    # constants.BATTERY_TIERS maps the level to what it asks for:
+    #   LOW       -> warning, names itself and runs nothing
+    #   VERY_LOW  -> smart_rtl
+    #   CRITICAL  -> land
+    #
+    # Walked in ascending order, first crossed wins. Retuning is a number here;
+    # adding a band is a line here plus a row in constants.BATTERY_TIERS.
+    #
+    # INVALID is not a battery band. Before the first telemetry message the
+    # whole snapshot reads zero, and 0.0 V means nobody is talking to this
+    # vehicle rather than a flat pack - without it a fresh start would ask for
+    # land on its first tick.
+    batt_invalid_v: 1.0
+    batt_critical_v: 10.0
+    batt_very_low_v: 10.5
+    batt_low_v: 11.1
+
+    # geofence, rc_loss and rc_throttle are stubs and read nothing yet.

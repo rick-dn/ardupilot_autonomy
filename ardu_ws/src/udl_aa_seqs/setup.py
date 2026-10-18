@@ -26,9 +26,11 @@ setup(
     license='MIT',
     tests_require=['pytest'],
     entry_points={
-        # Standalone test scripts only. There is no node entry point yet - the
-        # sequences are here, but what starts them is not decided.
         'console_scripts': [
+            'udl_aa_seqs = udl_aa_seqs.sequence_runner:main',
+            # Standalone test scripts. Each owns its node and bypasses the
+            # runner entirely - they are not sequences and it knows nothing
+            # about them.
             'test_goto_local = udl_aa_seqs.sequences.test.test_goto_local:main',
             'test_goto_body = udl_aa_seqs.sequences.test.test_goto_body:main',
             'test_velocity = udl_aa_seqs.sequences.test.test_velocity:main',

@@ -16,7 +16,7 @@ flown with no receiver at all never trips this.
 
 from typing import Dict
 
-from udl_aa_ss.constants import CLEAR, Verdict
+from udl_aa_fc.constants import CLEAR, Verdict
 
 
 def evaluate(telemetry, limits: Dict[str, float], state: Dict) -> Verdict:
